@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deepsignal.intraday_runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/.venv/bin/python</string>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/main.py</string>
+    <string>intraday-runner</string>
+    <string>--market</string>
+    <string>kr</string>
+    <string>--output-dir</string>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/outputs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DEEPSIGNAL_PROJECT_ROOT</key>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>INTRADAY_INTERVAL_SEC</key>
+    <string>180</string>
+    <key>INTRADAY_TRAIL_PCT</key>
+    <string>0.10</string>
+    <key>INTRADAY_HARD_STOP_PCT</key>
+    <string>0.07</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/jjugii/.deepsignal/project_root</string>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/intraday_runner.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/intraday_runner.error.log</string>
+</dict>
+</plist>

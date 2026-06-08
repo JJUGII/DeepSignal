@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deepsignal.report_kr_open</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/.venv/bin/python</string>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/main.py</string>
+    <string>market-open-report</string>
+    <string>--label</string>
+    <string>국내장 시작</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DEEPSIGNAL_PROJECT_ROOT</key>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/jjugii/.deepsignal/project_root</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/report_kr_open.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/report_kr_open.error.log</string>
+</dict>
+</plist>

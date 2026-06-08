@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-ui",
+      "runtimeExecutable": "/Volumes/JJU/#Project/Mac/Deepsignal/.venv/bin/python",
+      "runtimeArgs": ["main.py", "web-ui", "--port", "8770"],
+      "port": 8770
+    }
+  ]
+}

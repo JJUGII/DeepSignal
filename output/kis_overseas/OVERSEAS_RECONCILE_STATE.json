@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-06-08T09:30:35",
+  "asset": "해외주식",
+  "success": true,
+  "matched": [],
+  "missing_in_snap": [],
+  "missing_in_broker": [],
+  "quantity_mismatch": [],
+  "warnings": [],
+  "broker_position_count": 0,
+  "usd_rate": 1350.0,
+  "kis_env": "live",
+  "total_usd_value": 0.0,
+  "total_usd_pnl": 0.0,
+  "cash_usd": 0.0
+}

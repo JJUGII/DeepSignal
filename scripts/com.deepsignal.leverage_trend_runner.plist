@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deepsignal.leverage_trend_runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/.venv/bin/python</string>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/main.py</string>
+    <string>leverage-trend</string>
+    <string>runner</string>
+    <string>--execute</string>
+    <string>--interval-minutes</string>
+    <string>30</string>
+    <string>--output-dir</string>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/outputs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DEEPSIGNAL_PROJECT_ROOT</key>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/jjugii/.deepsignal/project_root</string>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/leverage_trend_runner.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/leverage_trend_runner.error.log</string>
+</dict>
+</plist>

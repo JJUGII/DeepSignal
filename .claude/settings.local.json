@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls /Users/jjugii/.claude/projects/ 2>/dev/null)",
+      "Bash(python3 -c ' *)",
+      "Bash(sed -i '' 's/⚠️ 오류: /오류: /g' 's/⚠️ 렌더링 오류: /렌더링 오류: /g' '/Volumes/JJU/#Project/Mac/Deepsignal/deepsignal/web_ui/static/app.js')"
+    ]
+  }
+}

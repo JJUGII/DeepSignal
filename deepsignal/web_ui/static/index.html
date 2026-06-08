@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>DeepSignal</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.css" crossorigin>
+  <link rel="stylesheet" href="/static/style.css?v=20260604bw41" />
+  <link rel="icon" type="image/png" href="/static/favicon.png?v=4" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+  <!-- 인증 오버레이 -->
+  <div id="auth-overlay" class="hidden">
+    <div class="auth-box">
+      <div class="auth-title">DeepSignal</div>
+      <div class="auth-desc" id="auth-message">인증 중...</div>
+      <div class="auth-spinner" id="auth-spinner"></div>
+      <div id="auth-error" class="auth-error hidden">
+        텔레그램 앱에서 봇을 통해 열어주세요.
+      </div>
+    </div>
+  </div>
+
+  <!-- 상단 네비게이션 -->
+  <nav class="topnav" id="topnav">
+    <div class="topnav-inner">
+
+      <!-- 브랜드 -->
+      <a class="topnav-brand" href="#dashboard" data-page="dashboard">
+        <img src="/static/icon.png?v=4" alt="DeepSignal" class="topnav-logo" />
+      </a>
+
+      <!-- 메뉴 링크 (데스크톱) -->
+      <ul class="topnav-links" id="topnav-links">
+        <li><a href="#dashboard" class="topnav-link" data-page="dashboard">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          대시보드
+        </a></li>
+        <li><a href="#charts" class="topnav-link" data-page="charts">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>
+          차트
+        </a></li>
+        <li><a href="#analysis" class="topnav-link" data-page="analysis">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>
+          신호분석
+        </a></li>
+        <li><a href="#trades" class="topnav-link" data-page="trades">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          거래내역
+        </a></li>
+        <li><a href="#runner" class="topnav-link" data-page="runner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+          러너 제어
+        </a></li>
+        <li><a href="#reports" class="topnav-link" data-page="reports">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          리포트
+        </a></li>
+        <li><a href="#logs" class="topnav-link" data-page="logs">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/></svg>
+          로그
+        </a></li>
+      </ul>
+
+      <!-- 우측 클러스터 -->
+      <div class="topnav-right">
+        <!-- 총 자산 (데스크톱) -->
+        <div class="topnav-asset" id="topnav-asset" style="display:none">
+          <div class="topnav-asset-label">총 자산</div>
+          <div class="topnav-asset-value" id="tnav-total-asset">—</div>
+        </div>
+        <!-- 러너 상태 배지 -->
+        <div id="runner-badge" class="runner-badge topnav-runner">
+          <span class="badge-dot"></span>
+          <span class="badge-text">확인 중...</span>
+        </div>
+        <!-- 설정 버튼 -->
+        <a href="#settings" class="topnav-settings-btn" data-page="settings" title="환경설정">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </a>
+        <!-- 햄버거 (모바일) -->
+        <button class="topnav-hamburger" id="topnav-hamburger" aria-label="메뉴">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 무승인 자동실행 배너 -->
+    <div id="auto-exec-banner" class="auto-exec-banner" style="display:none"></div>
+
+    <!-- 모바일 드로어 -->
+    <div class="topnav-drawer" id="topnav-drawer">
+      <a href="#dashboard" class="drawer-link" data-page="dashboard">대시보드</a>
+      <a href="#charts"    class="drawer-link" data-page="charts">차트</a>
+      <a href="#analysis"  class="drawer-link" data-page="analysis">신호분석</a>
+      <a href="#trades"    class="drawer-link" data-page="trades">거래내역</a>
+      <a href="#runner"    class="drawer-link" data-page="runner">러너 제어</a>
+      <a href="#reports"   class="drawer-link" data-page="reports">리포트</a>
+      <a href="#logs"      class="drawer-link" data-page="logs">로그</a>
+      <a href="#settings"  class="drawer-link" data-page="settings">환경설정</a>
+    </div>
+  </nav>
+
+  <!-- 메인 콘텐츠 -->
+  <div id="app">
+    <main class="page-content">
+      <div class="page-inner">
+        <div id="page-dashboard" class="page"></div>
+        <div id="page-runner"    class="page hidden"></div>
+        <div id="page-settings"  class="page hidden"></div>
+        <div id="page-logs"      class="page hidden"></div>
+        <div id="page-analysis"  class="page hidden"></div>
+        <div id="page-trades"    class="page hidden"></div>
+        <div id="page-charts"    class="page hidden"></div>
+        <div id="page-reports"   class="page hidden"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 하단 탭바 (모바일 / Telegram WebApp) -->
+  <nav class="bottom-nav hidden" id="bottom-nav">
+    <a class="bnav-item active" data-page="dashboard">
+      <span class="bnav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>
+      <span class="bnav-label">홈</span>
+    </a>
+    <a class="bnav-item" data-page="runner">
+      <span class="bnav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg></span>
+      <span class="bnav-label">러너</span>
+    </a>
+    <a class="bnav-item" data-page="analysis">
+      <span class="bnav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg></span>
+      <span class="bnav-label">신호</span>
+    </a>
+    <a class="bnav-item" data-page="trades">
+      <span class="bnav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
+      <span class="bnav-label">거래</span>
+    </a>
+    <a class="bnav-item" data-page="logs">
+      <span class="bnav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg></span>
+      <span class="bnav-label">로그</span>
+    </a>
+    <a class="bnav-item" data-page="settings">
+      <span class="bnav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg></span>
+      <span class="bnav-label">설정</span>
+    </a>
+  </nav>
+
+  <!-- 토스트 알림 -->
+  <div id="toast-container"></div>
+
+  <script src="/static/app.js?v=20260604bw41"></script>
+</body>
+</html>

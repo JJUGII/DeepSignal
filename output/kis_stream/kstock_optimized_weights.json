@@ -1,0 +1,26 @@
+{
+  "weights": {
+    "trend": 0.2,
+    "volume": 0.2,
+    "orderbook": 0.2,
+    "momentum": 0.2,
+    "market": 0.1,
+    "risk": 0.1
+  },
+  "default_weights": {
+    "trend": 0.2,
+    "volume": 0.2,
+    "orderbook": 0.2,
+    "momentum": 0.2,
+    "market": 0.1,
+    "risk": 0.1
+  },
+  "n_samples": 84,
+  "horizon_minutes": 5,
+  "expected_win_rate": 0.4524,
+  "default_win_rate": 0.4524,
+  "improvement": 0.0,
+  "applied": true,
+  "optimized_at": 1780162336,
+  "asset_label": "국장"
+}

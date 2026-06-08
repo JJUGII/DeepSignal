@@ -1,0 +1,31 @@
+.env
+.venv/
+data/*.db
+__pycache__/
+.pytest_cache/
+*.pyc
+._*
+logs/*.json
+logs/*.log
+outputs/*
+outputs/.kis_token_cache.json
+!outputs/.gitkeep
+
+# ── 비밀키/개인정보 (절대 커밋 금지) ──
+.env*
+!.env.example
+*.bak
+gaein.txt
+*_secret*
+*_credential*
+.kis_token_cache.json
+outputs/.kis_token_cache.json
+
+# ── 데이터/DB ──
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ── 윈도우 설치 번들 (중복·대용량) ──
+deepsignal_install/

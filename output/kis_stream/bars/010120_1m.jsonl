@@ -1,0 +1,4 @@
+{"symbol": "010120", "timeframe": "1m", "open_ts_ms": 1780294320000, "open": 266250, "high": 266500, "low": 266000, "close": 266000, "volume": 310, "trade_value": 82537000, "trade_count": 58, "buy_ratio": 0.7068965517241379, "closed": true}
+{"symbol": "010120", "timeframe": "1m", "open_ts_ms": 1780294380000, "open": 266500, "high": 267000, "low": 266000, "close": 266000, "volume": 1374, "trade_value": 366038500, "trade_count": 123, "buy_ratio": 0.6260162601626016, "closed": true}
+{"symbol": "010120", "timeframe": "1m", "open_ts_ms": 1780294440000, "open": 266000, "high": 267000, "low": 266000, "close": 266500, "volume": 1241, "trade_value": 330821000, "trade_count": 140, "buy_ratio": 0.6642857142857143, "closed": true}
+{"symbol": "010120", "timeframe": "1m", "open_ts_ms": 1780294500000, "open": 266500, "high": 267000, "low": 266000, "close": 266000, "volume": 2907, "trade_value": 774732250, "trade_count": 107, "buy_ratio": 0.7009345794392523, "closed": true}
