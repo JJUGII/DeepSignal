@@ -209,7 +209,8 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     # 실행 직전 0.55 벽에 막힌다. 9~10은 사실상 해제(0.05).
     _exec_wp = round(0.55 * p.entry_threshold_mult, 2)
     if not p.edge_gate_enforced:
-        _exec_wp = 0.05
+        # L9=5%(최소한의 필터), L10=0(도박 — ML 승률 완전 무시)
+        _exec_wp = 0.05 if p.level == 9 else 0.0
     e["CRYPTO_EXEC_MIN_WIN_PROB"] = str(_exec_wp)
     # AI 매도 임계값은 매수 임계값보다 확실히 낮게(절반) — 사자마자 'AI 승률낮음'
     # 으로 즉시 청산되는 모순 방지. (매수 0.05 → 매도 0.02)
