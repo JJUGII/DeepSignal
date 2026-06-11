@@ -860,6 +860,12 @@ def cmd_regime_trend_runner(args: argparse.Namespace) -> int:
     print(f"regime-trend-runner 시작 (interval {interval//60}분, execute={execute})", flush=True)
     while not _stop["v"]:
         try:
+            # 공격성 다이얼 갱신 (9~10단계: 추세추종 신규 배분 0 — 단타에 현금 양보)
+            try:
+                from deepsignal.risk.aggression import refresh_and_apply as _raa
+                _raa()
+            except Exception:
+                pass
             res = execute_regime_trend(out_dir, execute=execute)
             if res.action != "HOLD" or res.executed:
                 print(f"[{now_kst_iso()}] {res.action} executed={res.executed} dry={res.dry_run} | {res.message}", flush=True)

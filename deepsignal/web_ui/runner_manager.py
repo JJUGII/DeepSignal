@@ -171,6 +171,7 @@ def get_runner_status(output_dir: Path) -> dict[str, Any]:
         "pause_reason": state.get("runner_pause_reason", ""),
         "orders_today": int(state.get("orders_today", 0)),
         "buy_krw_today": float(state.get("buy_krw_today", 0.0)),
+        "sell_krw_today": float(state.get("sell_krw_today", 0.0)),
         "last_market": state.get("last_market"),
         "daily_key": state.get("daily_key"),
     }

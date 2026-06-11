@@ -183,6 +183,8 @@ def _persist_trade_state(output_dir: str | Path, plan: Any) -> None:
             bm.add(market)
         st["buy_markets_today"] = sorted(bm)
     elif side == "sell":
+        krw = float(getattr(plan, "krw_amount", 0) or 0)
+        st["sell_krw_today"] = float(st.get("sell_krw_today", 0.0) or 0.0) + krw
         record_sell_in_state(st, market=market)
     save_runner_state(output_dir, st)
 
@@ -652,5 +654,4 @@ def poll_telegram_menu_fast(
             "updates": summary.get("updates"),
         }
     return summary
-
 

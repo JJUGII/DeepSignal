@@ -582,6 +582,7 @@ def _execute_sell_signal(
         state = load_runner_state(cfg.output_dir)
         state["last_order_date"] = _today_key()
         state["orders_today"] = int(state.get("orders_today", 0) or 0) + 1
+        state["sell_krw_today"] = float(state.get("sell_krw_today", 0.0) or 0.0) + float(plan.krw_amount or 0.0)
         # post_sell_reentry_cooldown 작동을 위해 매도 시각 기록
         record_sell_in_state(state, market=market)
         save_runner_state(cfg.output_dir, state)

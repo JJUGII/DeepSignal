@@ -29,3 +29,6 @@ data/
 
 # ── 윈도우 설치 번들 (중복·대용량) ──
 deepsignal_install/
+
+# 실시간 스트림 데이터 (output 단수 디렉토리)
+output/

@@ -666,8 +666,13 @@ def fetch_recent_signals(db_path: Optional[str], limit: int = 20) -> list[dict[s
     return [{k: r[k] for k in r.keys()} for r in rows]
 
 
-def fetch_latest_signals(db_path: Optional[str], limit: int = 100) -> list[dict[str, Any]]:
-    """심볼당 최신 1건(`technical_v1`, `signal_date`·`id` 기준) signals를 최대 limit개 반환.
+def fetch_latest_signals(
+    db_path: Optional[str],
+    limit: int = 100,
+    *,
+    strategy_names: tuple[str, ...] | list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """심볼당 최신 1건(`signal_date`·`id` 기준) signals를 최대 limit개 반환.
 
     반환 dict 키: symbol, signal_date, final_score, action, confidence,
     technical_score, news_score, macro_score
@@ -687,18 +692,24 @@ def fetch_latest_signals(db_path: Optional[str], limit: int = 100) -> list[dict[
     except (TypeError, ValueError):
         cap = 500
     lim = max(1, min(int(limit), cap))
-    sql = """
+    strategies = tuple(
+        s.strip()
+        for s in (strategy_names if strategy_names is not None else ("technical_v1",))
+        if str(s).strip()
+    ) or ("technical_v1",)
+    placeholders = ",".join("?" for _ in strategies)
+    sql = f"""
 WITH ranked AS (
-    SELECT symbol, signal_date, final_score, action, confidence,
+    SELECT symbol, signal_date, strategy_name, final_score, action, confidence,
            technical_score, news_score, macro_score,
            ROW_NUMBER() OVER (
                PARTITION BY symbol
                ORDER BY signal_date DESC, id DESC
            ) AS rn
     FROM signals
-    WHERE strategy_name = 'technical_v1'
+    WHERE strategy_name IN ({placeholders})
 )
-SELECT symbol, signal_date, final_score, action, confidence,
+SELECT symbol, signal_date, strategy_name, final_score, action, confidence,
        technical_score, news_score, macro_score
 FROM ranked
 WHERE rn = 1
@@ -707,7 +718,7 @@ LIMIT ?
     with sqlite3.connect(str(resolved)) as conn:
         conn.row_factory = sqlite3.Row
         _migrate_signals_schema(conn)
-        cur = conn.execute(sql, (lim,))
+        cur = conn.execute(sql, (*strategies, lim))
         rows = cur.fetchall()
     return [{k: r[k] for k in r.keys()} for r in rows]
 

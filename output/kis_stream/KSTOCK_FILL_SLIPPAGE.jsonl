@@ -1,3 +1,5 @@
 {"ts": "2026-05-30T17:43:37.945868+00:00", "symbol": "005930", "side": "buy", "market": "KRW", "limit_price": 280000.0, "fill_price": 280000.0, "order_krw": 280000.0, "slippage_bps": 0.0, "order_id": "0044738300"}
 {"ts": "2026-06-01T03:33:23.351660+00:00", "symbol": "005930", "side": "sell", "market": "KRW", "limit_price": 348500.0, "fill_price": 348500.0, "order_krw": 348500.0, "slippage_bps": 0.0, "order_id": "0043973500"}
 {"ts": "2026-06-02T00:59:29.925372+00:00", "symbol": "360750", "side": "buy", "market": "KRW", "limit_price": 28365.0, "fill_price": 28365.0, "order_krw": 538935.0, "slippage_bps": 0.0, "order_id": "0004011200"}
+{"ts": "2026-06-11T02:32:51.619252+00:00", "symbol": "360750", "side": "buy", "market": "KRW", "limit_price": 27590.0, "fill_price": 27590.0, "order_krw": 220720.0, "slippage_bps": 0.0, "order_id": "0024849600"}
+{"ts": "2026-06-11T03:51:58.754544+00:00", "symbol": "360750", "side": "sell", "market": "KRW", "limit_price": 27500.0, "fill_price": 27555.0, "order_krw": 220442.0, "slippage_bps": 20.0, "order_id": "0027433800"}

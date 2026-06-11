@@ -46,6 +46,37 @@ MARKET_DISPLAY_KO = {
 }
 
 
+def _truthy_env(name: str, default: str = "false") -> bool:
+    import os
+
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _live_auto_crypto_buy_requires_ml_gate() -> bool:
+    """실거래 무승인 BUY에서는 ML 게이트 fail-open을 기본 차단한다."""
+    if _truthy_env("DEEPSIGNAL_ALLOW_CRYPTO_ML_FAIL_OPEN"):
+        return False
+    auto_on = _truthy_env("CRYPTO_AUTO_EXECUTE_WITHOUT_APPROVAL") or _truthy_env(
+        "DEEPSIGNAL_CRYPTO_AUTO_EXECUTE"
+    )
+    paper = _truthy_env("CRYPTO_PAPER_MODE")
+    dry_run = _truthy_env("UPBIT_DRY_RUN")
+    require = _truthy_env("CRYPTO_REQUIRE_ML_GATE_FOR_LIVE_BUY", "true")
+    return bool(auto_on and not paper and not dry_run and require)
+
+
+def _ml_result_failed_open(ml_result: Any) -> bool:
+    status = str(getattr(ml_result, "status", "") or "").lower()
+    mode = str(getattr(ml_result, "ensemble_mode", "") or "").lower()
+    return status in {
+        "disabled",
+        "skipped",
+        "no_model",
+        "degenerate_failopen",
+        "error",
+    } or mode == "off"
+
+
 @dataclass
 class CryptoRecommendation:
     market: str
@@ -567,6 +598,16 @@ def build_crypto_recommendation(
             continue
         fs = ms.final_score if ms.final_score is not None else ms.technical_score
         ml_r = ml_ens.predict(t.market, final_score=fs)
+        if _live_auto_crypto_buy_requires_ml_gate() and _ml_result_failed_open(ml_r):
+            prob_log = ml_r.blended_p if ml_r.blended_p is not None else ml_r.lgbm_p
+            log_gate_decision(
+                market=t.market,
+                mode=gate_mode,
+                prob=prob_log,
+                final_score=fs,
+                extra=f"blocked_ml_fail_open:{ml_r.status}",
+            )
+            continue
         if (ml_buy_gate_enabled() or ensemble_enabled()) and not ml_r.allowed:
             prob_log = ml_r.blended_p if ml_r.blended_p is not None else ml_r.lgbm_p
             log_gate_decision(
@@ -623,6 +664,16 @@ def build_crypto_recommendation(
         tech_pre = breakdown.get("technical_score")
         final_pre = breakdown.get("final_score")
         fs_pre = float(final_pre or tech_pre or 0)
+        if _live_auto_crypto_buy_requires_ml_gate() and _ml_result_failed_open(ml_final):
+            prob_log = ml_final.blended_p if ml_final.blended_p is not None else ml_final.lgbm_p
+            log_gate_decision(
+                market=best.market,
+                mode=gate_mode,
+                prob=prob_log,
+                final_score=fs_pre,
+                extra=f"blocked_ml_fail_open:{ml_final.status}",
+            )
+            continue
         if (ml_buy_gate_enabled() or ensemble_enabled()) and not ml_final.allowed:
             prob_log = ml_final.blended_p if ml_final.blended_p is not None else ml_final.lgbm_p
             log_gate_decision(

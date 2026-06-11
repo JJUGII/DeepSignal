@@ -43,6 +43,7 @@ class OperationalRiskContext:
 class RecommendationConfig:
     broker: str = "kis"
     symbols: list[str] | None = None
+    signal_strategy_names: tuple[str, ...] | list[str] | None = ("technical_v1", "k_gsqs_v1")
     signal_scan_limit: int = 500
     include_market_price_universe: bool = False
     market_price_universe_limit: int = 2000

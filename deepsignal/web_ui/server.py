@@ -256,7 +256,12 @@ def _get_regime_trend_position() -> dict[str, Any] | None:
         if not state_file.is_file():
             return None
         import json as _json
-        state = _json.loads(state_file.read_text(encoding="utf-8"))
+        # 계좌 스냅샷과 대조해 외부 매도된 유령 포지션은 자동 정리
+        try:
+            from deepsignal.live_trading.regime_trend import reconcile_position_with_account
+            state = reconcile_position_with_account(_OUTPUT_DIR)
+        except Exception:
+            state = _json.loads(state_file.read_text(encoding="utf-8"))
         if not state.get("holding"):
             return None
         etf = state.get("etf", "360750")
@@ -2743,6 +2748,7 @@ def _get_kstock_positions() -> dict:
         total_pnl = None
 
     positions = []
+    seen_symbols: set[str] = set()
     for p in (raw.get("positions") or []):
         r = p.get("raw") or {}
         pnl_pct = None
@@ -2762,6 +2768,27 @@ def _get_kstock_positions() -> dict:
             "pnl_pct":       pnl_pct,
             "pnl_amt":       float(r.get("evlu_pfls_amt", 0)) if r.get("evlu_pfls_amt") else None,
             "tpsl":          tpsl,
+        })
+        if sym:
+            seen_symbols.add(str(sym))
+
+    rt = _get_regime_trend_position()
+    if rt and rt["symbol"] not in seen_symbols:
+        sym = str(rt["symbol"])
+        qty = float(rt.get("quantity") or 0)
+        avg = float(rt.get("avg_price") or 0)
+        cur = float(rt.get("current_price") or 0)
+        positions.append({
+            "symbol":        sym,
+            "name":          rt.get("name", sym),
+            "quantity":      rt.get("quantity"),
+            "avg_price":     rt.get("avg_price"),
+            "current_price": rt.get("current_price"),
+            "market_value":  rt.get("market_value"),
+            "pnl_pct":       rt.get("pnl_pct"),
+            "pnl_amt":       round((cur - avg) * qty, 0) if avg and qty else None,
+            "tpsl":          _compute_position_tpsl(sym),
+            "_from_state":   True,
         })
 
     snap_time = raw.get("timestamp", "")

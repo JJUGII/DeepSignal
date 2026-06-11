@@ -66,6 +66,13 @@ def _symbol_set(symbols: list[str] | None) -> set[str] | None:
     return out or None
 
 
+def _strategy_tuple(names: Any) -> tuple[str, ...]:
+    if names is None:
+        return ("technical_v1",)
+    out = tuple(str(s).strip() for s in names if str(s).strip())
+    return out or ("technical_v1",)
+
+
 def _position_map(account: AccountContext) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for row in account.positions:
@@ -97,11 +104,20 @@ def _is_risk_off(macro: dict[str, Any]) -> bool:
 def _latest_price(db_path: str, symbol: str, position: dict[str, Any] | None) -> float | None:
     from deepsignal.storage.database import fetch_latest_market_price
 
-    row = fetch_latest_market_price(db_path, symbol, source="yfinance")
-    if row and row.get("close") is not None:
-        px = _float(row.get("close"), 0.0)
-        if px > 0:
-            return px
+    sym = str(symbol or "").strip().upper()
+    candidates = [sym]
+    if sym.isdigit() and len(sym) <= 6:
+        candidates.extend([f"{sym}.KS", f"{sym}.KQ"])
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        row = fetch_latest_market_price(db_path, candidate, source="yfinance")
+        if row and row.get("close") is not None:
+            px = _float(row.get("close"), 0.0)
+            if px > 0:
+                return px
     if position:
         px = _float(position.get("current_price"), 0.0)
         if px > 0:
@@ -151,7 +167,11 @@ def build_recommendations(
     )
 
     scan_limit = max(100, int(getattr(config, "signal_scan_limit", 500) or 500))
-    raw_signals = fetch_latest_signals(db_path, limit=scan_limit)
+    raw_signals = fetch_latest_signals(
+        db_path,
+        limit=scan_limit,
+        strategy_names=_strategy_tuple(getattr(config, "signal_strategy_names", None)),
+    )
     selected = _symbol_set(config.symbols)
     positions = _position_map(account)
     signals = {str(s.get("symbol") or "").strip().upper(): s for s in raw_signals if str(s.get("symbol") or "").strip()}
@@ -216,6 +236,13 @@ def build_recommendations(
         if action in {"BUY", "INCREASE"} and px and px > 0:
             order_value = min(max(0.0, desired_value - current_value), capital_remaining)
             suggested_qty = int(math.floor(order_value / px))
+            if (
+                suggested_qty <= 0
+                and desired_value > current_value
+                and capital_remaining >= float(px)
+                and current_value + float(px) <= float(config.max_position_weight) * equity
+            ):
+                suggested_qty = 1
             order_value = float(suggested_qty) * float(px)
             capital_remaining = max(0.0, capital_remaining - order_value)
         elif action == "REDUCE":

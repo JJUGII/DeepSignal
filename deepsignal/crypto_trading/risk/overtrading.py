@@ -41,6 +41,7 @@ def prune_state_for_new_day(state: dict[str, Any], daily_key: str) -> None:
     state["daily_key"] = daily_key
     state["orders_today"] = 0
     state["buy_krw_today"] = 0.0
+    state["sell_krw_today"] = 0.0
     state["buy_markets_today"] = []
     state["buy_krw_by_market_today"] = {}
     state["buy_count_by_market_today"] = {}

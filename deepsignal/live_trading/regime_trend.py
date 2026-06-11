@@ -109,6 +109,63 @@ def save_position(output_dir: str | Path, state: dict[str, Any]) -> None:
             pass
 
 
+def reconcile_position_with_account(output_dir: str | Path) -> dict[str, Any]:
+    """추세추종 보유상태를 실제 계좌 스냅샷과 **수량 동기화**한다.
+
+    안전 설계(중요): KIS 잔고 조회가 일시적으로 종목을 누락할 수 있어
+    "스냅샷에 없음 = 매도"로 단정하면 멀쩡한 포지션을 잘못 청산할 위험이 있다.
+    그래서:
+      - ETF가 스냅샷에 **있으면**: state 수량을 계좌 수량으로 맞춘다(부분매도 반영).
+        계좌 수량이 0이면 holding=False로 정리.
+      - ETF가 스냅샷에 **없으면**: 아무것도 하지 않는다(보수적 — 누락 가능성).
+    """
+    import glob as _glob
+    state = load_position(output_dir)
+    etf = str(state.get("etf") or "").strip()
+    if not etf:
+        return state
+    files = sorted(_glob.glob(str(Path(output_dir) / "live_account_snapshot_*.json")))
+    files = [f for f in files if "/._" not in f and not Path(f).name.startswith("._")]
+    if not files:
+        return state
+    try:
+        snap = json.loads(Path(files[-1]).read_text(encoding="utf-8"))
+        pos_by_sym = {str(p.get("symbol")): p for p in (snap.get("positions") or [])}
+    except Exception:
+        return state
+    acct = pos_by_sym.get(etf)
+    if acct is None:
+        return state  # 스냅샷에 없음 → 누락 가능성, 판단 보류(보수적)
+    try:
+        acct_qty = int(float(acct.get("quantity") or 0))
+    except (TypeError, ValueError):
+        return state
+    cur_qty = int(float(state.get("qty") or 0))
+    if acct_qty <= 0:
+        if state.get("holding"):
+            state["holding"] = False
+            state["qty"] = 0
+            state.setdefault("history", []).append({
+                "symbol": etf, "side": "SELL", "action": "RECONCILE_FLAT",
+                "at": _now_iso(), "note": "계좌 수량 0 — 청산 반영"})
+            save_position(output_dir, state)
+    elif acct_qty != cur_qty:
+        # 부분 매도/추가 등으로 수량 변동 → 동기화
+        state["holding"] = True
+        state["qty"] = acct_qty
+        try:
+            state["current_qty_synced_at"] = _now_iso()
+        except Exception:
+            pass
+        state.setdefault("history", []).append({
+            "symbol": etf, "side": "SYNC", "action": "RECONCILE_QTY",
+            "at": _now_iso(), "note": f"수량 동기화 {cur_qty}→{acct_qty}주"})
+        save_position(output_dir, state)
+        import logging as _lg
+        _lg.getLogger(__name__).info("[RegimeTrend] %s 수량 동기화 %d→%d", etf, cur_qty, acct_qty)
+    return state
+
+
 def regime_trend_etf() -> str:
     return os.environ.get("REGIME_TREND_ETF", _DEFAULT_ETF).strip() or _DEFAULT_ETF
 
@@ -148,7 +205,7 @@ def decide_regime_trend(output_dir: str | Path, *, db_path: str | None = None) -
     from deepsignal.risk.trading_halt import is_trading_halted
 
     sig = compute_trend_signal(db_path)
-    pos = load_position(output_dir)
+    pos = reconcile_position_with_account(output_dir)  # 외부 매도 자동 교정
     holding = bool(pos.get("holding"))
     etf = regime_trend_etf()
     halted, hreason = is_trading_halted(output_dir)

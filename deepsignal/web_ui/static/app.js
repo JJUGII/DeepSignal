@@ -1298,59 +1298,92 @@ function _kpiHistoryPush(key, value) {
   } catch { return [value]; }
 }
 
-function buildKpiStrip(d, holdings, stockHoldings, totalAsset) {
+function buildKpiStrip(d, holdings, stockHoldings, totalAsset, returnsData = null) {
   const r = d.runner || {};
   const coinVal  = holdings.reduce((s, h) => s + (h.valuation_krw || 0), 0);
   const stockVal = stockHoldings.reduce((s, h) => s + (h.market_value || 0), 0);
+  const krwTotal = d.balance_krw_total ?? d.balance_krw ?? 0;
+  const stockCash = d.stock_balance_krw || 0;
+  const availableCash = krwTotal + stockCash;
+  const coinCost = holdings.reduce((s, h) => s + (Number(h.avg_buy_price || 0) * Number(h.quantity || 0)), 0);
+  const stockCost = stockHoldings.reduce((s, h) => s + (Number(h.avg_price || 0) * Number(h.quantity || 0)), 0);
+  const investedCost = coinCost + stockCost;
+  const unrealizedPnl = (coinVal + stockVal) - investedCost;
+  const unrealizedPnlPct = investedCost > 0 ? unrealizedPnl / investedCost * 100 : null;
   const coinPnlPct  = holdings.length
     ? holdings.reduce((s, h) => s + (h.pnl_pct || 0), 0) / holdings.length : null;
   const stockPnlPct = stockHoldings.length
     ? stockHoldings.reduce((s, h) => s + (h.pnl_pct || 0), 0) / stockHoldings.length : null;
+  const todayBuy = Number(r.buy_krw_today || 0);
+  const todaySell = Number(r.sell_krw_today || 0);
+  const todayNet = todaySell - todayBuy;
+  const realizedToday = returnsData?.combined?.total_realized_krw ?? null;
 
   const totalHist  = _kpiHistoryPush('total',  totalAsset);
   const coinHist   = _kpiHistoryPush('coin',   coinPnlPct ?? 0);
   const stockHist  = _kpiHistoryPush('stock',  stockPnlPct ?? 0);
   const ordersHist = _kpiHistoryPush('orders', r.orders_today || 0);
+  const pnlHist    = _kpiHistoryPush('pnl', unrealizedPnlPct ?? 0);
 
   const dc = v => v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'flat';
   const dl = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%';
-
-  const runState = r.running ? (r.paused ? 'paused' : 'running') : 'stopped';
+  const krwCls = v => v > 0 ? 'text-up' : v < 0 ? 'text-down' : '';
+  const signedKrw = v => {
+    if (v == null) return '-';
+    const n = Number(v || 0);
+    return (n > 0 ? '+' : n < 0 ? '-' : '') + fmt_krw(Math.abs(Math.round(n)));
+  };
+  const positionItems = [
+    ...stockHoldings.map(h => ({
+      label: h.name || h.symbol,
+      sub: `${h.quantity || 0}주 · ${fmt_krw(h.market_value || 0)}`,
+      pct: h.pnl_pct,
+    })),
+    ...holdings.map(h => ({
+      label: coinKoreanName(h.market) || (h.market || '').replace('KRW-', ''),
+      sub: `${h.quantity || 0}개 · ${fmt_krw(h.valuation_krw || 0)}`,
+      pct: h.pnl_pct,
+    })),
+  ].slice(0, 4);
+  const stockAvgPct = stockHoldings.length ? stockPnlPct : null;
+  const coinAvgPct = holdings.length ? coinPnlPct : null;
 
   return `
-  <div class="kpi-strip">
-    <div class="kpi-card accent-indigo">
-      <div class="kpi-label">총 자산</div>
-      <div class="kpi-value" style="font-size:20px">${fmt_krw(Math.round(totalAsset))}</div>
-      <div class="kpi-bottom">
-        <span class="kpi-delta flat">합산</span>
-        ${buildSparkline(totalHist, { color: 'var(--accent)' })}
+  <div class="dashboard-summary">
+    <section class="summary-hero">
+      <div class="summary-label">현재 총 자산</div>
+      <div class="summary-asset">${fmt_krw(Math.round(totalAsset))}</div>
+      <div class="summary-main-row">
+        <span class="summary-pill ${dc(unrealizedPnlPct)}">평가손익 ${signedKrw(unrealizedPnl)} · ${dl(unrealizedPnlPct)}</span>
+        <span class="summary-pill flat">가용 현금 ${fmt_krw(Math.round(availableCash))}</span>
       </div>
-    </div>
-    <div class="kpi-card accent-violet">
-      <div class="kpi-label">코인 보유 수익률 <span style="font-size:9px;color:var(--text-muted)">(미실현)</span></div>
-      <div class="kpi-value ${coinPnlPct != null ? pct_class(coinPnlPct) : ''}" style="font-size:22px">${coinPnlPct != null ? fmt_pct(coinPnlPct) : '<span style="font-size:14px;color:var(--text-muted)">보유 없음</span>'}</div>
-      <div class="kpi-bottom">
-        <span class="kpi-delta ${dc(coinPnlPct)}">${dl(coinPnlPct)}</span>
-        ${buildSparkline(coinHist, { color: 'var(--accent-2)' })}
+      <div class="summary-chart">${buildSparkline(totalHist, { width: 210, height: 34, color: 'var(--accent)' })}</div>
+    </section>
+
+    <section class="summary-panel">
+      <div class="summary-panel-title">오늘 거래</div>
+      <div class="summary-big ${realizedToday != null ? krwCls(realizedToday) : ''}">${realizedToday != null ? signedKrw(realizedToday) : '-'}</div>
+      <div class="summary-muted">실현손익 ${returnsData?.combined ? `· ${returnsData.combined.trade_count || 0}건 · 승률 ${(returnsData.combined.win_rate || 0).toFixed(1)}%` : ''}</div>
+      <div class="summary-metric-row"><span>매수</span><strong class="text-up">${fmt_krw(Math.round(todayBuy))}</strong></div>
+      <div class="summary-metric-row"><span>매도</span><strong class="text-down">${fmt_krw(Math.round(todaySell))}</strong></div>
+      <div class="summary-metric-row"><span>순현금</span><strong class="${todayNet > 0 ? 'text-up' : todayNet < 0 ? 'text-down' : ''}">${signedKrw(todayNet)}</strong></div>
+    </section>
+
+    <section class="summary-panel">
+      <div class="summary-panel-title">보유 현황</div>
+      <div class="summary-holding-split">
+        <div><span>코인</span><strong>${holdings.length}개</strong><em class="${coinAvgPct != null ? pct_class(coinAvgPct) : ''}">${dl(coinAvgPct)}</em></div>
+        <div><span>국내주식</span><strong>${stockHoldings.length}종목</strong><em class="${stockAvgPct != null ? pct_class(stockAvgPct) : ''}">${dl(stockAvgPct)}</em></div>
       </div>
-    </div>
-    <div class="kpi-card accent-cyan">
-      <div class="kpi-label">주식 보유 수익률 <span style="font-size:9px;color:var(--text-muted)">(미실현)</span></div>
-      <div class="kpi-value ${stockPnlPct != null ? pct_class(stockPnlPct) : ''}" style="font-size:22px">${stockPnlPct != null ? fmt_pct(stockPnlPct) : '<span style="font-size:14px;color:var(--text-muted)">보유 없음</span>'}</div>
-      <div class="kpi-bottom">
-        <span class="kpi-delta ${dc(stockPnlPct)}">${dl(stockPnlPct)}</span>
-        ${buildSparkline(stockHist, { color: 'var(--cyan)' })}
+      <div class="summary-position-list">
+        ${positionItems.length ? positionItems.map(item => `
+          <div class="summary-position-item">
+            <div><strong>${escHtml(item.label)}</strong><span>${item.sub}</span></div>
+            <b class="${item.pct != null ? pct_class(item.pct) : ''}">${dl(item.pct)}</b>
+          </div>
+        `).join('') : '<div class="summary-empty">보유 포지션 없음</div>'}
       </div>
-    </div>
-    <div class="kpi-card accent-green">
-      <div class="kpi-label">러너 · 오늘 주문</div>
-      <div class="kpi-value" style="font-size:20px"><span class="dot-inline ${runState}" style="margin-right:6px"></span>${r.orders_today ?? 0}<span class="kpi-unit">건</span></div>
-      <div class="kpi-bottom">
-        <span class="kpi-delta flat" style="overflow:hidden;text-overflow:ellipsis;max-width:72px;white-space:nowrap">${r.last_market || '—'}</span>
-        ${buildSparkline(ordersHist, { color: 'var(--up)' })}
-      </div>
-    </div>
+    </section>
   </div>`;
 }
 
@@ -1688,16 +1721,16 @@ async function loadDashboard() {
       </div>
     </div>
 
+    ${buildKpiStrip(d, holdings, stockHoldings, totalAsset, returnsData)}
+    ${returnsData ? buildReturnsSection(returnsData) : ''}
+    ${assetChart}
+
     ${approvalBanners}
     ${riskBanner}
     ${openOrderSection}
     ${failuresSection}
 
     <div id="aggression-card">${_aggData ? aggressionCardInnerHTML(_aggData.level) : ''}</div>
-
-    ${buildKpiStrip(d, holdings, stockHoldings, totalAsset)}
-    ${assetChart}
-    ${returnsData ? buildReturnsSection(returnsData) : ''}
 
     <div class="dash-main-layout">
       <div class="dash-main-left">
@@ -1723,6 +1756,9 @@ async function loadDashboard() {
             </div>
             <div class="status-card-row">
               <span class="sc-key">오늘 매수</span><span class="sc-val">${fmt_krw(r.buy_krw_today || 0)}</span>
+            </div>
+            <div class="status-card-row">
+              <span class="sc-key">오늘 매도</span><span class="sc-val">${fmt_krw(r.sell_krw_today || 0)}</span>
             </div>
             <div class="status-card-divider"></div>
             <div class="status-card-row">
@@ -2046,6 +2082,8 @@ async function loadRunner() {
       <div class="cards" style="margin-bottom:0">
         <div class="card"><div class="card-label">주문 수</div><div class="card-value">${r.orders_today ?? 0}</div></div>
         <div class="card"><div class="card-label">매수 금액</div><div class="card-value" style="font-size:15px">${fmt_krw(r.buy_krw_today)}</div></div>
+        <div class="card"><div class="card-label">매도 금액</div><div class="card-value" style="font-size:15px">${fmt_krw(r.sell_krw_today)}</div></div>
+        <div class="card"><div class="card-label">순현금</div><div class="card-value" style="font-size:15px">${fmt_krw((r.sell_krw_today || 0) - (r.buy_krw_today || 0))}</div></div>
         <div class="card"><div class="card-label">마지막 종목</div><div class="card-value" style="font-size:14px">${r.last_market || '-'}</div></div>
         <div class="card"><div class="card-label">일자 키</div><div class="card-value" style="font-size:13px">${r.daily_key || '-'}</div></div>
       </div>

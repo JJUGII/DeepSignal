@@ -53,7 +53,13 @@ def test_low_volume_ratio_blocks() -> None:
     assert "거래량" in reason
 
 
-def test_build_crypto_buy_still_works_with_filters() -> None:
+def test_build_crypto_buy_still_works_with_filters(monkeypatch) -> None:
+    monkeypatch.setenv("CRYPTO_ML_BUY_GATE", "false")
+    monkeypatch.setenv("CRYPTO_ML_ENSEMBLE", "false")
+    # live fail-open 가드(_live_auto_crypto_buy_requires_ml_gate) 중화 —
+    # 실운영 .env가 CRYPTO_AUTO_EXECUTE_WITHOUT_APPROVAL=true면 ML off 상태 BUY가
+    # 차단되어 rec=None이 됨. 이 테스트는 품질 필터 검증이므로 paper 모드로 격리.
+    monkeypatch.setenv("CRYPTO_PAPER_MODE", "true")
     br = _br()
     rec = build_crypto_recommendation(br, buy_quality=CryptoBuyQualityConfig())
     assert rec is not None

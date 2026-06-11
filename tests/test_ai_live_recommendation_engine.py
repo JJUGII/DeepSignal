@@ -104,6 +104,61 @@ def test_buy_recommendation_created(tmp_path: Path) -> None:
     assert rec.suggested_limit_price == pytest.approx(100.0)
 
 
+def test_buy_recommendation_uses_k_gsqs_signal_strategy(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    insert_signal_result(
+        db,
+        SignalResult(
+            symbol="005930",
+            signal_date="2026-06-10",
+            technical_score=82.0,
+            news_score=None,
+            macro_score=None,
+            final_score=82.0,
+            action="BUY_CANDIDATE",
+            confidence=0.82,
+            reason="k-gsqs test",
+            raw={},
+            strategy_name="k_gsqs_v1",
+        ),
+    )
+    _price(db, "005930", 100.0)
+
+    recs = build_recommendations(
+        db_path=db,
+        account=_account(),
+        macro_context=_macro(),
+        risk_context=OperationalRiskContext(),
+        config=_cfg(),
+    )
+
+    rec = recs[0]
+    assert rec.symbol == "005930"
+    assert rec.action == "BUY"
+    assert rec.allowed_for_plan is True
+    assert rec.score_breakdown["final_score"] == pytest.approx(82.0)
+
+
+def test_domestic_price_fallback_uses_yfinance_ks_suffix(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    _signal(db, "005930", 80.0, "BUY_CANDIDATE")
+    _price(db, "005930.KS", 100.0)
+
+    rec = build_recommendations(
+        db_path=db,
+        account=_account(),
+        macro_context=_macro(),
+        risk_context=OperationalRiskContext(),
+        config=_cfg(),
+    )[0]
+
+    assert rec.symbol == "005930"
+    assert rec.action == "BUY"
+    assert rec.allowed_for_plan is True
+    assert rec.suggested_limit_price == pytest.approx(100.0)
+    assert rec.suggested_quantity > 0
+
+
 def test_increase_recommendation_created_for_low_weight_position(tmp_path: Path) -> None:
     db = _db(tmp_path)
     _signal(db, "005930", 90.0, "BUY_CANDIDATE")
@@ -191,6 +246,42 @@ def test_capital_limit_applies_to_order_value(tmp_path: Path) -> None:
 
     assert rec.suggested_quantity == 4
     assert rec.estimated_order_value == pytest.approx(400.0)
+
+
+def test_high_price_buy_rounds_to_one_share_when_within_limits(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    _signal(db, "000660", 80.0, "BUY_CANDIDATE")
+    _price(db, "000660", 2400.0)
+
+    rec = build_recommendations(
+        db_path=db,
+        account=_account(equity=10_000.0),
+        macro_context=_macro(),
+        risk_context=OperationalRiskContext(),
+        config=_cfg(capital_limit=3_000.0),
+    )[0]
+
+    assert rec.allowed_for_plan is True
+    assert rec.suggested_quantity == 1
+    assert rec.estimated_order_value == pytest.approx(2400.0)
+
+
+def test_high_price_buy_stays_blocked_when_one_share_exceeds_capital(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    _signal(db, "000660", 80.0, "BUY_CANDIDATE")
+    _price(db, "000660", 2400.0)
+
+    rec = build_recommendations(
+        db_path=db,
+        account=_account(equity=10_000.0),
+        macro_context=_macro(),
+        risk_context=OperationalRiskContext(),
+        config=_cfg(capital_limit=2_000.0),
+    )[0]
+
+    assert rec.allowed_for_plan is False
+    assert rec.suggested_quantity == 0
+    assert "suggested_quantity_zero" in rec.blocked_reasons
 
 
 def test_duplicate_recent_order_blocks_plan(tmp_path: Path) -> None:

@@ -164,6 +164,15 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     e["REGIME_MAX_LEVERAGE"] = str(p.leverage_max)
     # 엣지 게이트 (9~10단계만 완화)
     sb("DEEPSIGNAL_ENFORCE_EDGE_GATE", p.edge_gate_enforced)
+    # 9~10(도박/청산가능)은 '미검증 엣지 코인 하드차단'·'ML fail-open 차단'도 해제.
+    # (이 플래그를 안 켜면 ENFORCE_EDGE_GATE=false여도 코인 live BUY가 별도 게이트에서 막힘)
+    # 1~8단계는 차단 유지(안전).
+    sb("DEEPSIGNAL_ALLOW_UNVERIFIED_CRYPTO_BUY", not p.edge_gate_enforced)
+    sb("DEEPSIGNAL_ALLOW_CRYPTO_ML_FAIL_OPEN", not p.edge_gate_enforced)
+    # 9~10단계(도박): 추세추종(패시브 ETF)이 현금을 흡수하지 않게 신규 배분 0.
+    # 공격적 단타(K-GSQS·인트라데이)가 현금을 쓰도록 양보. 1~8단계는 .env 기본 복원.
+    base_rt_alloc = _base("REGIME_TREND_ALLOC_KRW", "300000") or "300000"
+    e["REGIME_TREND_ALLOC_KRW"] = "0" if not p.edge_gate_enforced else str(base_rt_alloc)
     # 일일 손실 한도 = 기준 × 배수
     base_loss = float(_base("DEEPSIGNAL_MAX_DAILY_LOSS_KRW", "100000") or "100000")
     e["DEEPSIGNAL_MAX_DAILY_LOSS_KRW"] = str(int(base_loss * p.daily_loss_mult))
