@@ -173,6 +173,17 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     # 공격적 단타(K-GSQS·인트라데이)가 현금을 쓰도록 양보. 1~8단계는 .env 기본 복원.
     base_rt_alloc = _base("REGIME_TREND_ALLOC_KRW", "300000") or "300000"
     e["REGIME_TREND_ALLOC_KRW"] = "0" if not p.edge_gate_enforced else str(base_rt_alloc)
+    # 코인 일일 매수 한도(금액·종목수)도 단계 연동: L9=3배 완화, L10=무제한(0).
+    # 1~8단계는 기본(가드레일 30만원/5종목) 유지.
+    if p.level >= 10:
+        e["CRYPTO_MAX_BUY_KRW_PER_DAY"] = "0"
+        e["CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY"] = "0"
+    elif p.level == 9:
+        e["CRYPTO_MAX_BUY_KRW_PER_DAY"] = "900000"
+        e["CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY"] = "15"
+    else:
+        e.pop("CRYPTO_MAX_BUY_KRW_PER_DAY", None)
+        e.pop("CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY", None)
     # 일일 손실 한도 = 기준 × 배수
     base_loss = float(_base("DEEPSIGNAL_MAX_DAILY_LOSS_KRW", "100000") or "100000")
     e["DEEPSIGNAL_MAX_DAILY_LOSS_KRW"] = str(int(base_loss * p.daily_loss_mult))

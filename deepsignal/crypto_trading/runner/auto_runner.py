@@ -299,8 +299,20 @@ def _run_crypto_auto_tick_body(
     result["sizing"] = sizing.to_dict()
 
     buy_daily_limit = not can_place_order_today(state, max_orders_per_day=cfg.max_orders_per_day)
+    # 공격성 다이얼 오버라이드: 일일 매수금액·종목수 한도 (9~10단계는 완화/해제, 0=무제한)
+    _cap_krw = float(cfg.max_buy_krw_per_day or 0.0)
+    _cap_mkts = int(cfg.max_distinct_buy_markets_per_day or 0)
+    try:
+        _ov_krw = os.environ.get("CRYPTO_MAX_BUY_KRW_PER_DAY", "").strip()
+        if _ov_krw != "":
+            _cap_krw = float(_ov_krw)
+        _ov_mkt = os.environ.get("CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY", "").strip()
+        if _ov_mkt != "":
+            _cap_mkts = int(float(_ov_mkt))
+    except ValueError:
+        pass
     buy_krw_today = float(state.get("buy_krw_today", 0.0) or 0.0)
-    if float(cfg.max_buy_krw_per_day or 0.0) > 0 and buy_krw_today >= float(cfg.max_buy_krw_per_day):
+    if _cap_krw > 0 and buy_krw_today >= _cap_krw:
         buy_daily_limit = True
         result["daily_limit_reason"] = "buy_krw_cap_reached"
     buy_markets_today = {
@@ -308,10 +320,7 @@ def _run_crypto_auto_tick_body(
         for m in (state.get("buy_markets_today") or [])
         if str(m).strip()
     }
-    if (
-        int(cfg.max_distinct_buy_markets_per_day or 0) > 0
-        and len(buy_markets_today) >= int(cfg.max_distinct_buy_markets_per_day)
-    ):
+    if _cap_mkts > 0 and len(buy_markets_today) >= _cap_mkts:
         buy_daily_limit = True
         result["daily_limit_reason"] = "distinct_buy_markets_cap_reached"
 
