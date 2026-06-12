@@ -2645,3 +2645,145 @@ body.has-bottom-nav .page-inner { padding-bottom: 70px; }
 .agg-on  { font-size:11px; font-weight:700; padding:3px 9px; border-radius:6px; background:var(--running-dim); color:var(--running); }
 .agg-off { font-size:11px; padding:3px 9px; border-radius:6px; background:rgba(255,255,255,.05); color:var(--text-disabled); text-decoration:line-through; }
 .agg-status { font-size:11px; color:var(--text-muted); margin-left:auto; }
+
+/* ═══════════════════════════════════════════════════════════════
+   iOS Liquid Glass 테마 — 기존 다크 테마 위 오버라이드 레이어
+   (반투명 유리 + backdrop-blur + 배경 오로라. 기능·색 규칙 불변)
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --glass-bg:        rgba(22, 22, 28, 0.55);
+  --glass-bg-strong: rgba(18, 18, 24, 0.72);
+  --glass-bg-soft:   rgba(255, 255, 255, 0.055);
+  --glass-border:    rgba(255, 255, 255, 0.12);
+  --glass-highlight: rgba(255, 255, 255, 0.22);
+  --glass-shadow:    0 8px 32px rgba(0, 0, 0, 0.35);
+  --glass-radius:    18px;
+  /* 카드류 기본색을 반투명으로 재정의 (수백 곳 일괄 적용) */
+  --bg-card:     rgba(24, 24, 30, 0.5);
+  --bg-elevated: rgba(255, 255, 255, 0.06);
+  --bg-active:   rgba(255, 255, 255, 0.10);
+}
+
+/* ── 배경: 딥 그라디언트 + 오로라 블롭 (유리 너머로 비치는 빛) ── */
+body {
+  background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(88, 86, 214, 0.16), transparent 60%),
+    radial-gradient(1000px 700px at -10% 30%, rgba(10, 132, 255, 0.12), transparent 55%),
+    radial-gradient(900px 900px at 70% 110%, rgba(191, 90, 242, 0.10), transparent 55%),
+    linear-gradient(180deg, #0a0a0f 0%, #0b0b12 50%, #0a0a0e 100%);
+  background-attachment: fixed;
+}
+
+/* ── 유리 패널: 카드·섹션·컨트롤·승인·차트 ─────────────────── */
+.card, .section-box, .control-card, .status-card, .chart-card,
+.gsqs-stat, .approval-card, .approval-banner, .alert-banner,
+.auth-box, .chart-sidebar, .agg-card, .auto-exec-banner {
+  background: var(--glass-bg) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  border: 1px solid var(--glass-border) !important;
+  border-radius: var(--glass-radius) !important;
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.04);
+}
+
+/* 상단 유리 빛 반사 (iOS 특유의 top highlight) */
+.card, .section-box, .control-card, .chart-card {
+  position: relative;
+  overflow: hidden;
+}
+.card::after, .section-box::after, .control-card::after, .chart-card::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 46%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), transparent);
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* ── 내비게이션: 강한 블러 앱바 ─────────────────────────────── */
+.topnav {
+  background: rgba(14, 14, 20, 0.62) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  border-bottom: 1px solid var(--glass-border) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 10px 30px rgba(0,0,0,0.25);
+}
+.bottom-nav {
+  background: rgba(14, 14, 20, 0.66) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  border-top: 1px solid var(--glass-border) !important;
+}
+
+/* ── 버튼: 유리 필(pill) ────────────────────────────────────── */
+.btn {
+  background: var(--glass-bg-soft);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14);
+  transition: background .18s ease, transform .12s ease, box-shadow .18s ease;
+}
+.btn:hover { background: rgba(255,255,255,0.12); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 16px rgba(0,0,0,0.3); }
+.btn:active { transform: scale(0.97); }
+.btn-analyze-coin, .btn-analyze-stock, .btn-analyze-overseas {
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border-radius: 12px;
+}
+
+/* ── 탭·토글·입력 ───────────────────────────────────────────── */
+.tab-btn {
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.tab-btn.active {
+  background: rgba(255,255,255,0.10);
+  border-color: var(--glass-border);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.16);
+}
+input[type="text"], input[type="number"], input[type="password"], select, textarea {
+  background: rgba(255,255,255,0.055) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 10px !important;
+}
+
+/* ── 테이블: 행 투명화 + 유리 호버 ─────────────────────────── */
+.table-wrap table { background: transparent; }
+.table-wrap th { background: rgba(255,255,255,0.04); }
+.table-wrap tr:hover td { background: rgba(255,255,255,0.05); }
+.table-wrap td, .table-wrap th { border-color: rgba(255,255,255,0.07) !important; }
+
+/* ── 토스트·모달: 최상층 유리 ───────────────────────────────── */
+.toast, .chart-modal-panel {
+  background: var(--glass-bg-strong) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.16) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5), inset 0 1px 0 var(--glass-highlight);
+}
+
+/* ── 공격성 슬라이더 카드 등 inline 스타일 영역 보정 ───────── */
+[id="aggression-card"] > div {
+  background: var(--glass-bg) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  border: 1px solid var(--glass-border) !important;
+  border-radius: var(--glass-radius) !important;
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-highlight);
+}
+
+/* blur 미지원 브라우저 폴백: 불투명도 보강 */
+@supports not (backdrop-filter: blur(1px)) {
+  .card, .section-box, .control-card, .status-card, .chart-card,
+  .topnav, .bottom-nav, .toast {
+    background: rgba(20, 20, 26, 0.92) !important;
+  }
+}
