@@ -123,12 +123,15 @@ def execute_kis_plan_inactive_auto(
                     max_orders=limit_cfg.max_orders,
                     allow_live_env=True,
                 )
+                # [실전-4] 설계: executor는 dry_run=False 플래그 자체를 거부한다.
+                # 실주문 진입은 dry_run=True + approved + execute + final_confirm 조합
+                # (텔레그램 승인 경로 run_approved_execution과 동일 시그니처).
                 exec_result = execute_live_order_plan(
                     plan_p,
                     broker,
                     approved=True,
                     execute=True,
-                    dry_run=False,
+                    dry_run=True,
                     final_confirm=FINAL_CONFIRM_TEXT,
                     live_policy=policy,
                     db_path=db_path,
