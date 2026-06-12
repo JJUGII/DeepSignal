@@ -428,7 +428,7 @@ class UpbitBroker:
             "market": m,
             "side": "ask",
             "volume": f"{vol:.8f}".rstrip("0").rstrip("."),
-            "price": str(int(limit_price)),
+            "price": (str(int(limit_price)) if float(limit_price).is_integer() else f"{limit_price:.8f}".rstrip("0").rstrip(".")),
             "ord_type": "limit",
         }
         krw_amount = vol * limit_price
@@ -493,7 +493,7 @@ class UpbitBroker:
             "market": m,
             "side": "bid",
             "volume": f"{volume:.8f}".rstrip("0").rstrip("."),
-            "price": str(int(limit_price)),
+            "price": (str(int(limit_price)) if float(limit_price).is_integer() else f"{limit_price:.8f}".rstrip("0").rstrip(".")),
             "ord_type": "limit",
         }
 
