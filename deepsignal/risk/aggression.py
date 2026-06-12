@@ -284,12 +284,30 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     _lvl = p.level
     # 매수벽 비율(bid≥ask×r): 낮을수록 완화. 1.0(기본) → 0.3(9~10)
     _wall = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.0, 6: 0.7, 7: 0.6, 8: 0.5, 9: 0.35, 10: 0.3}
-    # 스프레드 허용: 0.25% → 0.6%(9~10)
-    _spr = {1: 0.25, 2: 0.25, 3: 0.25, 4: 0.30, 5: 0.30, 6: 0.35, 7: 0.40, 8: 0.45, 9: 0.55, 10: 0.6}
+    # 스프레드 허용: 0.25% → 0.8%(10, 동적 하드맥스와 정렬). 하락장은 호가가
+    # 0.6~0.8%로 벌어져 0.6 상한이면 사실상 전 종목 차단됨(2026-06-12 123건 실측).
+    _spr = {1: 0.25, 2: 0.25, 3: 0.25, 4: 0.30, 5: 0.30, 6: 0.35, 7: 0.40, 8: 0.45, 9: 0.7, 10: 0.8}
     e["CRYPTO_MIN_BID_ASK_RATIO"] = str(_wall.get(_lvl, 1.0))
     e["CRYPTO_MAX_SPREAD_PCT"] = str(_spr.get(_lvl, 0.25))
     # 공격적 체결(호가 맨앞=best ask 즉시 체결)은 9~10단계만
     e["CRYPTO_AGGRESSIVE_FILL"] = "true" if _lvl >= 9 else "false"
+    # 과매매 쿨다운(재매수/시간당/재진입)·세션 유동성 하한도 단계 연동.
+    # 기본(20분/2회/15분, 거래대금 5억)은 churn 방지용이나 9~10은 고회전 의도라 완화.
+    if _lvl >= 10:
+        e["CRYPTO_REBUY_COOLDOWN_MINUTES"] = "3"
+        e["CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR"] = "12"
+        e["CRYPTO_POST_SELL_REENTRY_COOLDOWN_MINUTES"] = "3"
+        e["CRYPTO_SESSION_MIN_ACC_TRADE_24H"] = "100000000"   # 1억
+    elif _lvl == 9:
+        e["CRYPTO_REBUY_COOLDOWN_MINUTES"] = "10"
+        e["CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR"] = "4"
+        e["CRYPTO_POST_SELL_REENTRY_COOLDOWN_MINUTES"] = "8"
+        e["CRYPTO_SESSION_MIN_ACC_TRADE_24H"] = "300000000"   # 3억
+    else:
+        for _k in ("CRYPTO_REBUY_COOLDOWN_MINUTES", "CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR",
+                   "CRYPTO_POST_SELL_REENTRY_COOLDOWN_MINUTES", "CRYPTO_SESSION_MIN_ACC_TRADE_24H"):
+            e.pop(_k, None)
+
     # 손절 하한(가장 타이트해도 이 값): 공격 체결 단계는 스프레드+수수료보다 넓게.
     # sl_pct_max(=손절 상한, 음수 중 0에 가까운 쪽)를 더 음수로 밀어 타이트 손절 방지.
     _sl_floor = {9: -1.3, 10: -1.5}

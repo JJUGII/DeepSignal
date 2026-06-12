@@ -564,7 +564,15 @@ def build_crypto_recommendation(
             pass
         if abs(float(t.signed_change_rate or 0.0)) > _chg_cap:
             continue
-        if float(t.acc_trade_price_24h or 0.0) < float(_CRYPTO.session_min_acc_trade_price_24h):
+        # 세션 유동성 하한: 공격성 다이얼이 낮추면 거래대금 작은 코인도 스캔 허용
+        _acc_floor = float(_CRYPTO.session_min_acc_trade_price_24h)
+        try:
+            _ov_acc = _os_cc.environ.get("CRYPTO_SESSION_MIN_ACC_TRADE_24H", "").strip()
+            if _ov_acc:
+                _acc_floor = min(_acc_floor, float(_ov_acc))
+        except ValueError:
+            pass
+        if float(t.acc_trade_price_24h or 0.0) < _acc_floor:
             continue
         if runner_state is not None:
             ok, _ = check_buy_allowed(
