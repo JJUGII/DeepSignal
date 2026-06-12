@@ -331,9 +331,12 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     if _lvl >= 9:
         e["CRYPTO_SL_PCT_MIN"] = "-2.0"
         e["CRYPTO_TRAILING_STOP_PCT"] = "2.5" if _lvl >= 10 else "2.0"
+        # 타임스톱 완화: 5분→15분 — 짧으면 왕복비용(~0.4%)만 확정하고 나가는 churn
+        e["CRYPTO_TIME_STOP_MINUTES"] = "15"
     else:
         e.pop("CRYPTO_SL_PCT_MIN", None)
         e.pop("CRYPTO_TRAILING_STOP_PCT", None)
+        e.pop("CRYPTO_TIME_STOP_MINUTES", None)
 
     # ── 주식 익절/손절도 단계 연동 (높을수록 익절 목표↑=수익 달리기, 손절폭↑=여유) ──
     # 분수 단위(0.15 = +15%, -0.07 = -7%)

@@ -105,7 +105,8 @@ class ExecutionEngineConfig:
     trailing_stop_pct: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_TRAILING_STOP_PCT") or 0.8))
     partial_tp_pct: float = 1.2
     partial_tp_fraction: float = 0.5
-    time_stop_minutes: float = 5.0
+    # 타임스톱: 방향 안 나오면 청산. 너무 짧으면 왕복비용(~0.4%)만 확정 — 다이얼 연동
+    time_stop_minutes: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_TIME_STOP_MINUTES") or 5.0))
     time_stop_max_abs_pnl_pct: float = 0.5
     ai_recheck_interval_sec: float = 30.0
     take_profit_pct: float = _CRYPTO.take_profit_pct
@@ -312,15 +313,18 @@ def compute_entry_limit_price(
     ob: OrderbookCheckResult,
     *,
     use_mid: bool = True,
+    attempt: int = 0,
 ) -> float:
     # 공격적 체결(높은 공격성 단계): 호가 맨앞(best ask)을 지정가로 잡아 즉시 체결.
     # 스프레드 게이트를 이미 통과한 뒤이므로 지불 스프레드는 한도 내로 제한된다.
     import os as _o
     if _o.environ.get("CRYPTO_AGGRESSIVE_FILL", "").strip().lower() in ("1", "true", "yes", "on"):
         if ob.best_ask > 0:
-            # 급등 추격 버퍼: 빠르게 오르는 코인은 ask가 도망가 10초 내 미체결됨
-            # (실측 SOPH 2회 타임아웃취소). 지정가 상한을 ask보다 살짝 위로 — 실제
-            # 체결은 호가 순서라 보통 ask에 채워지고, 급등 중엔 버퍼 내에서 추격.
+            # 진입 프리미엄 절감: 1차 시도는 정확히 best ask(버퍼 0) — 대부분 여기서
+            # 체결된다. 미체결 재시도(attempt≥1)에만 추격 버퍼를 얹어 급등을 쫓는다.
+            # (버퍼를 첫 시도부터 쓰면 평균 매수가가 ~0.3% 비싸짐 — 실측 28.9bps)
+            if attempt <= 0:
+                return round_crypto_limit_price(ob.best_ask)
             try:
                 _buf = float(_o.environ.get("CRYPTO_AGGRESSIVE_FILL_BUFFER_PCT", "0.15") or 0.15)
             except ValueError:
@@ -668,7 +672,7 @@ class CryptoExecutionEngine:
                     min_bid_ask_ratio=cfg.min_bid_ask_volume_ratio,
                     levels=cfg.orderbook_levels,
                 )
-                limit_px = compute_entry_limit_price(ob, use_mid=cfg.use_mid_or_bid_plus_tick)
+                limit_px = compute_entry_limit_price(ob, use_mid=cfg.use_mid_or_bid_plus_tick, attempt=attempt)
                 if not ob.allowed:
                     break
 
