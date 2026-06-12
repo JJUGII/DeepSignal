@@ -2665,14 +2665,24 @@ body.has-bottom-nav .page-inner { padding-bottom: 70px; }
   --bg-active:   rgba(255, 255, 255, 0.10);
 }
 
-/* ── 배경: 딥 그라디언트 + 오로라 블롭 (유리 너머로 비치는 빛) ── */
+/* ── 배경: 고정 오로라 레이어 ───────────────────────────────────
+   background-attachment:fixed 는 모바일 웹뷰(iOS 텔레그램)가 무시해
+   스크롤 위치마다 색이 달라짐 → position:fixed 가상 레이어로 그린다. */
 body {
+  background: #0a0a0e;
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  width: auto; height: auto;
+  z-index: 0;
+  pointer-events: none;
   background:
-    radial-gradient(1200px 800px at 85% -10%, rgba(88, 86, 214, 0.16), transparent 60%),
-    radial-gradient(1000px 700px at -10% 30%, rgba(10, 132, 255, 0.12), transparent 55%),
-    radial-gradient(900px 900px at 70% 110%, rgba(191, 90, 242, 0.10), transparent 55%),
-    linear-gradient(180deg, #0a0a0f 0%, #0b0b12 50%, #0a0a0e 100%);
-  background-attachment: fixed;
+    radial-gradient(120% 85% at 85% -10%, rgba(88, 86, 214, 0.16), transparent 60%),
+    radial-gradient(110% 75% at -10% 35%, rgba(10, 132, 255, 0.12), transparent 55%),
+    radial-gradient(100% 95% at 70% 115%, rgba(191, 90, 242, 0.10), transparent 55%),
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 30%);
 }
 
 /* ── 유리 패널: 카드·섹션·컨트롤·승인·차트 ─────────────────── */
