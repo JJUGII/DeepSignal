@@ -289,8 +289,10 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     _spr = {1: 0.25, 2: 0.25, 3: 0.25, 4: 0.30, 5: 0.30, 6: 0.35, 7: 0.40, 8: 0.45, 9: 0.7, 10: 0.8}
     e["CRYPTO_MIN_BID_ASK_RATIO"] = str(_wall.get(_lvl, 1.0))
     e["CRYPTO_MAX_SPREAD_PCT"] = str(_spr.get(_lvl, 0.25))
-    # 공격적 체결(호가 맨앞=best ask 즉시 체결)은 9~10단계만
+    # 공격적 체결(호가 맨앞=best ask 즉시 체결)은 9~10단계만.
+    # 추격 버퍼: 급등 코인은 ask가 도망가 미체결 — 지정가 상한을 ask 위로.
     e["CRYPTO_AGGRESSIVE_FILL"] = "true" if _lvl >= 9 else "false"
+    e["CRYPTO_AGGRESSIVE_FILL_BUFFER_PCT"] = "0.5" if _lvl >= 10 else ("0.3" if _lvl == 9 else "0.15")
     # 과매매 쿨다운(재매수/시간당/재진입)·세션 유동성 하한도 단계 연동.
     # 기본(20분/2회/15분, 거래대금 5억)은 churn 방지용이나 9~10은 고회전 의도라 완화.
     # 스캔 유니버스 확장: 9~10단계는 업비트 전체 KRW(거래대금 상위)까지 스캔
