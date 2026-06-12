@@ -293,6 +293,9 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     e["CRYPTO_AGGRESSIVE_FILL"] = "true" if _lvl >= 9 else "false"
     # 과매매 쿨다운(재매수/시간당/재진입)·세션 유동성 하한도 단계 연동.
     # 기본(20분/2회/15분, 거래대금 5억)은 churn 방지용이나 9~10은 고회전 의도라 완화.
+    # 스캔 유니버스 확장: 9~10단계는 업비트 전체 KRW(거래대금 상위)까지 스캔
+    # — 라이브 스트림 메이저 ~30종 밖의 급등주(단독상장 알트)도 시야에 포함.
+    sb("CRYPTO_SCAN_UNION_ALL_KRW", not p.edge_gate_enforced)
     if _lvl >= 10:
         e["CRYPTO_REBUY_COOLDOWN_MINUTES"] = "3"
         e["CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR"] = "12"

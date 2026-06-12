@@ -459,6 +459,22 @@ def build_crypto_recommendation(
                         ticker_map[m] = broker.get_ticker(m)
                     except Exception:
                         pass
+            # ── 유니버스 확장(다이얼 연동): 라이브 스트림은 메이저 ~30종뿐이라
+            # 업비트 단독상장 급등주(SOPH·XPL 등)가 시야 밖이었다. 켜면 업비트
+            # 전체 KRW 거래대금 상위까지 스캔에 합친다(품질 게이트는 동일 적용).
+            import os as _os_uni
+            if _os_uni.environ.get("CRYPTO_SCAN_UNION_ALL_KRW", "false").strip().lower() in ("1", "true", "yes", "on"):
+                try:
+                    full_meta = resolve_crypto_markets(broker, config=ucfg, holdings_markets=hold_markets)
+                    extra = [m for m in full_meta.markets if m in valid_upbit and m not in ticker_map]
+                    if extra:
+                        extra_t = fetch_tickers_batched(
+                            broker, extra, batch_size=100, valid_markets=valid_upbit)
+                        ticker_map.update(extra_t)
+                        scan_markets = tuple(dict.fromkeys(
+                            list(scan_markets) + [m for m in extra if m in extra_t]))
+                except Exception:
+                    pass
         else:
             universe_meta = resolve_crypto_markets(
                 broker,
