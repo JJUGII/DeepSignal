@@ -278,8 +278,9 @@ def check_orderbook_for_buy(
         # CRYPTO_DYNAMIC_SPREAD_ENABLED=true 면 동적 임계값 사용
         _dyn_allowed, _dyn_reason = gate.check(market, spread_pct)
         if not _dyn_allowed:
-            # 동적 게이트가 활성화됐고 차단됨 → max_spread_pct 무시하고 동적 기준 적용
-            effective_max = gate.threshold(market)
+            # 동적 기준은 정적 한도(공격성 단계 의도값)보다 '엄격해지지 않게' —
+            # 신규 코인 fallback(0.30%)이 L10 0.8%를 덮어 급등주를 차단하던 버그.
+            effective_max = max(float(max_spread_pct), float(gate.threshold(market)))
         else:
             effective_max = max_spread_pct  # 비활성 or 통과: 원래 기준 유지
     except Exception:
