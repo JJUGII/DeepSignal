@@ -100,7 +100,9 @@ class ExecutionEngineConfig:
     use_mid_or_bid_plus_tick: bool = True
     kelly_max_fraction: float = 0.05
     kelly_min_fraction: float = 0.01
-    trailing_stop_pct: float = 0.8
+    # 트레일링 폭: 다이얼 연동(CRYPTO_TRAILING_STOP_PCT). 좁으면 이익을 일찍 끊음
+    # (실측: 0.8%에서 트레일링 매도 12건 평균 -0.52%). 높은 단계는 이익 달리기.
+    trailing_stop_pct: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_TRAILING_STOP_PCT") or 0.8))
     partial_tp_pct: float = 1.2
     partial_tp_fraction: float = 0.5
     time_stop_minutes: float = 5.0

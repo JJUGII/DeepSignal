@@ -315,6 +315,15 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
         e["CRYPTO_SL_PCT_MAX"] = str(_sl_floor[_lvl])
     else:
         e.pop("CRYPTO_SL_PCT_MAX", None)
+    # 손익비 교정(실측 이익+0.67 vs 손실-2.63 = 1:4 역전):
+    # ① 손절 최대깊이 -3.0% → -2.0%(9~10) — 손실은 짧게
+    # ② 트레일링 폭 0.8% → 2.0/2.5%(9~10) — 이익은 길게 달리기
+    if _lvl >= 9:
+        e["CRYPTO_SL_PCT_MIN"] = "-2.0"
+        e["CRYPTO_TRAILING_STOP_PCT"] = "2.5" if _lvl >= 10 else "2.0"
+    else:
+        e.pop("CRYPTO_SL_PCT_MIN", None)
+        e.pop("CRYPTO_TRAILING_STOP_PCT", None)
 
     # ── 주식 익절/손절도 단계 연동 (높을수록 익절 목표↑=수익 달리기, 손절폭↑=여유) ──
     # 분수 단위(0.15 = +15%, -0.07 = -7%)

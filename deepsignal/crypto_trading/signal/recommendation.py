@@ -548,11 +548,42 @@ def build_crypto_recommendation(
         _logging.getLogger(__name__).debug("[rt_features] 로드 실패: %s", _e)
 
     _static_excluded = {m.upper() for m in (getattr(_CRYPTO, "static_excluded_markets", ()) or ())}
+
+    # ── 연속 손절 차단: 당일 같은 코인 N회(기본 2) 손절이면 그날 재매수 금지 ──
+    # 실측: ERA 7연속 손절(-15%) 등 '같은 칼날 반복'이 최대 출혈원. 전 단계 적용.
+    _sl_blocked: set[str] = set()
+    try:
+        import os as _os_slb
+        _max_sl = int(float(_os_slb.environ.get("CRYPTO_MAX_STOP_LOSS_PER_MARKET_PER_DAY", "2") or 2))
+        if _max_sl > 0:
+            import sqlite3 as _sq
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            _db = _Path(output_dir) / "crypto_recommendation_outcomes.db"
+            if _db.exists():
+                _today = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d")
+                _conn = _sq.connect(str(_db))
+                for _mk, _n in _conn.execute(
+                    "SELECT market, COUNT(*) FROM crypto_recommendation_outcomes "
+                    "WHERE side='sell' AND realized_pnl_pct < 0 AND created_at LIKE ? "
+                    "AND (exit_reason LIKE '%손절%' OR reason LIKE '%손절%' "
+                    "     OR exit_reason LIKE '%stop_loss%' OR reason LIKE '%트레일링%') "
+                    "GROUP BY market HAVING COUNT(*) >= ?", (_today + "%", _max_sl)
+                ):
+                    _sl_blocked.add(str(_mk).upper())
+                _conn.close()
+            if _sl_blocked:
+                import logging as _lg_slb
+                _lg_slb.getLogger(__name__).info(
+                    "[연속손절차단] 오늘 재매수 금지: %s", sorted(_sl_blocked))
+    except Exception:
+        _sl_blocked = set()
     for t in tickers:
         if t.market.upper() in excluded:
             continue
         if t.market.upper() in _static_excluded:
             continue
+        if t.market.upper() in _sl_blocked:
+            continue  # 당일 연속 손절 코인 — 같은 칼날 재진입 금지
         # 추격매수 캡: 기본은 보수적(8%)이나 공격성 다이얼이 올리면 급등주도 허용
         _chg_cap = float(_CRYPTO.session_max_signed_change_rate)
         try:

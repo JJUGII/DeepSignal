@@ -24,9 +24,9 @@ def get_dynamic_tp_sl_for_market(
         if result is None:
             return None
         tp_d, sl_d, _ = result
-        from deepsignal.crypto_trading.risk.sizing import _clamp, _eff_sl_pct_max
+        from deepsignal.crypto_trading.risk.sizing import _clamp, _eff_sl_pct_max, _eff_sl_pct_min
         tp = _clamp(tp_d, float(_CRYPTO.tp_pct_min), float(_CRYPTO.tp_pct_max))
-        sl = _clamp(sl_d, float(_CRYPTO.sl_pct_min), _eff_sl_pct_max())
+        sl = _clamp(sl_d, _eff_sl_pct_min(), _eff_sl_pct_max())
         return tp, sl
     except Exception:
         return None
