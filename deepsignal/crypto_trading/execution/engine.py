@@ -317,7 +317,14 @@ def compute_entry_limit_price(
     import os as _o
     if _o.environ.get("CRYPTO_AGGRESSIVE_FILL", "").strip().lower() in ("1", "true", "yes", "on"):
         if ob.best_ask > 0:
-            return round_crypto_limit_price(ob.best_ask)
+            # 급등 추격 버퍼: 빠르게 오르는 코인은 ask가 도망가 10초 내 미체결됨
+            # (실측 SOPH 2회 타임아웃취소). 지정가 상한을 ask보다 살짝 위로 — 실제
+            # 체결은 호가 순서라 보통 ask에 채워지고, 급등 중엔 버퍼 내에서 추격.
+            try:
+                _buf = float(_o.environ.get("CRYPTO_AGGRESSIVE_FILL_BUFFER_PCT", "0.15") or 0.15)
+            except ValueError:
+                _buf = 0.15
+            return round_crypto_limit_price(ob.best_ask * (1.0 + max(0.0, _buf) / 100.0))
     if use_mid and ob.mid_price > 0:
         return round_crypto_limit_price(ob.mid_price)
     if ob.best_bid > 0:
