@@ -184,6 +184,41 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     else:
         e.pop("CRYPTO_MAX_BUY_KRW_PER_DAY", None)
         e.pop("CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY", None)
+
+    # ── 국내주식·해외주식 일일/주문 캡도 단계 연동 ──────────────────────
+    # L9=3배 완화, L10=사실상 무제한(가용현금이 자연 한도). 1~8은 .env 기본 복원.
+    # 손실 '방지' 게이트(스프레드·체결품질·RR)는 단계와 무관하게 유지 — 한도만 푼다.
+    _b_ord = _base("KIS_STOCK_MAX_ORDERS_PER_DAY", "3") or "3"
+    _b_val = _base("KIS_STOCK_MAX_ORDER_VALUE", "300000") or "300000"
+    _b_sgl = _base("KIS_STOCK_MAX_SINGLE_ORDER_VALUE", _b_val) or _b_val
+    _b_tot = _base("KIS_STOCK_MAX_TOTAL_ORDER_VALUE", _b_val) or _b_val
+    _b_ousd_cap = _base("OVERSEAS_CAPITAL_USD", "1000") or "1000"
+    _b_ousd_sgl = _base("OVERSEAS_MAX_SINGLE_ORDER_USD", "300") or "300"
+    _b_orun = _base("OVERSEAS_MAX_ORDERS_PER_RUN", "3") or "3"
+    if p.level >= 10:
+        e["KIS_STOCK_MAX_ORDERS_PER_DAY"] = "999"
+        e["KIS_STOCK_MAX_ORDER_VALUE"] = "99999999"
+        e["KIS_STOCK_MAX_SINGLE_ORDER_VALUE"] = "99999999"
+        e["KIS_STOCK_MAX_TOTAL_ORDER_VALUE"] = "99999999"
+        e["OVERSEAS_CAPITAL_USD"] = "999999"
+        e["OVERSEAS_MAX_SINGLE_ORDER_USD"] = "999999"
+        e["OVERSEAS_MAX_ORDERS_PER_RUN"] = "10"
+    elif p.level == 9:
+        e["KIS_STOCK_MAX_ORDERS_PER_DAY"] = str(int(float(_b_ord)) * 3)
+        e["KIS_STOCK_MAX_ORDER_VALUE"] = str(int(float(_b_val)) * 3)
+        e["KIS_STOCK_MAX_SINGLE_ORDER_VALUE"] = str(int(float(_b_sgl)) * 3)
+        e["KIS_STOCK_MAX_TOTAL_ORDER_VALUE"] = str(int(float(_b_tot)) * 3)
+        e["OVERSEAS_CAPITAL_USD"] = str(int(float(_b_ousd_cap)) * 3)
+        e["OVERSEAS_MAX_SINGLE_ORDER_USD"] = str(int(float(_b_ousd_sgl)) * 3)
+        e["OVERSEAS_MAX_ORDERS_PER_RUN"] = str(int(float(_b_orun)) * 2)
+    else:
+        e["KIS_STOCK_MAX_ORDERS_PER_DAY"] = str(_b_ord)
+        e["KIS_STOCK_MAX_ORDER_VALUE"] = str(_b_val)
+        e["KIS_STOCK_MAX_SINGLE_ORDER_VALUE"] = str(_b_sgl)
+        e["KIS_STOCK_MAX_TOTAL_ORDER_VALUE"] = str(_b_tot)
+        e["OVERSEAS_CAPITAL_USD"] = str(_b_ousd_cap)
+        e["OVERSEAS_MAX_SINGLE_ORDER_USD"] = str(_b_ousd_sgl)
+        e["OVERSEAS_MAX_ORDERS_PER_RUN"] = str(_b_orun)
     # 일일 손실 한도 = 기준 × 배수
     base_loss = float(_base("DEEPSIGNAL_MAX_DAILY_LOSS_KRW", "100000") or "100000")
     e["DEEPSIGNAL_MAX_DAILY_LOSS_KRW"] = str(int(base_loss * p.daily_loss_mult))
