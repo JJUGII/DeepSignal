@@ -151,6 +151,14 @@ def execute_overseas_plan(
 
     results: list[OverseasExecResult] = []
     submitted = 0
+    # 매수가능 USD 조회 (통합증거금 환산 포함). 실패 시 None → 예산추적 생략
+    _remaining_usd: float | None = None
+    try:
+        _remaining_usd = broker.get_overseas_buyable_usd()
+        if _remaining_usd is not None:
+            _remaining_usd = float(_remaining_usd) * 0.98  # 환율 변동 버퍼 2%
+    except Exception:
+        _remaining_usd = None
     for o in orders:
         if submitted >= max_orders:
             break
@@ -163,10 +171,19 @@ def execute_overseas_plan(
         # 단일 주문 상한 재확인
         if qty * px > max_single:
             qty = max(1, int(max_single // px))
+        # 잔여 매수가능 USD 추적 — 앞 주문이 예산을 쓰면 수량 축소/스킵
+        # (없으면 "주문가능금액 초과" 거부가 종목 수만큼 반복됨)
+        if side == "BUY" and _remaining_usd is not None:
+            if _remaining_usd < px:  # 1주도 불가
+                continue
+            if qty * px > _remaining_usd:
+                qty = max(1, int(_remaining_usd // px))
         # 실행 (게이트 ON이면 execute=True, 아니면 dry-run)
         res = broker.place_order_overseas(
             symbol, side, qty, px, execute=gate_on,
         )
+        if side == "BUY" and _remaining_usd is not None and res.status == "KIS_ORDER_SUBMITTED":
+            _remaining_usd -= qty * px
         ok = res.status in ("KIS_ORDER_SUBMITTED",) or (not gate_on)
         results.append(OverseasExecResult(
             symbol=symbol, side=side, quantity=qty, limit_price_usd=px,
