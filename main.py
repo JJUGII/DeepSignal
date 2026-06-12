@@ -1755,8 +1755,10 @@ def cmd_overseas_auto_runner(args: argparse.Namespace) -> int:
             if not tok or not chat:
                 return
             from deepsignal.live_trading.telegram.approval import telegram_api_post
+            # 해외 체결/실패 포맷은 <b> HTML 태그 사용 — Markdown이면 태그가 그대로 보임
+            _pm = "HTML" if ("<b>" in text or "<code>" in text) else "Markdown"
             telegram_api_post("sendMessage",
-                {"chat_id": chat, "text": text, "parse_mode": "Markdown"}, bot_token=tok)
+                {"chat_id": chat, "text": text, "parse_mode": _pm}, bot_token=tok)
         except Exception:
             pass
 

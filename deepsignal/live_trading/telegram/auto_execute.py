@@ -120,6 +120,9 @@ def send_runner_telegram(
         "text": text,
         "disable_web_page_preview": True,
     }
+    # HTML 태그(<b> 등)가 든 메시지는 HTML 파스모드로 — 아니면 태그가 그대로 노출됨
+    if "<b>" in text or "<code>" in text or "<i>" in text:
+        payload["parse_mode"] = "HTML"
     if reply_markup and token:
         from deepsignal.live_trading.telegram.approval import _reply_markup
 
