@@ -298,6 +298,9 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     # 스캔 유니버스 확장: 9~10단계는 업비트 전체 KRW(거래대금 상위)까지 스캔
     # — 라이브 스트림 메이저 ~30종 밖의 급등주(단독상장 알트)도 시야에 포함.
     sb("CRYPTO_SCAN_UNION_ALL_KRW", not p.edge_gate_enforced)
+    # 국내주식 전 시장 스캐너(KIS 순위 API) + 장중 재계획 — 워치리스트 47종 밖
+    # 급등주 시야. 9~10단계만 (낮은 단계는 아침 1회 계획의 보수 운용 유지).
+    sb("KR_SCANNER_ENABLED", not p.edge_gate_enforced)
     if _lvl >= 10:
         e["CRYPTO_REBUY_COOLDOWN_MINUTES"] = "3"
         e["CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR"] = "12"

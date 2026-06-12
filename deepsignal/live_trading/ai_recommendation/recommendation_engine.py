@@ -122,6 +122,24 @@ def _latest_price(db_path: str, symbol: str, position: dict[str, Any] | None) ->
         px = _float(position.get("current_price"), 0.0)
         if px > 0:
             return px
+    # 3차 fallback: 전 시장 스캐너(kr_movers_v1)가 당일 신호에 저장한 KIS 시세.
+    # 워치리스트·yfinance 밖 급등주는 여기서만 가격을 얻는다 (스캔 3분 주기라 신선).
+    try:
+        import json as _j
+        import sqlite3 as _sq
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        today = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d")
+        with _sq.connect(db_path) as _conn:
+            row2 = _conn.execute(
+                "SELECT raw_json FROM signals WHERE symbol=? AND signal_date=? "
+                "AND strategy_name='kr_movers_v1' LIMIT 1", (sym.zfill(6) if sym.isdigit() else sym, today)
+            ).fetchone()
+        if row2 and row2[0]:
+            px = _float(_j.loads(row2[0]).get("price"), 0.0)
+            if px > 0:
+                return px
+    except Exception:
+        pass
     return None
 
 

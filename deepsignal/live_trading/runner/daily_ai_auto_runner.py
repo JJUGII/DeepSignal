@@ -295,6 +295,43 @@ def _tick_auto_sell(
     return state
 
 
+_kr_scan_state: dict[str, float] = {"last_scan": 0.0, "last_replan": 0.0}
+
+
+def _maybe_intraday_scan_and_replan(runner, *, db_path: str, state):
+    """전 시장 급등주 스캔(KIS 순위 API) + 장중 주기 재계획.
+
+    KR_SCANNER_ENABLED(다이얼 L9-10)일 때만. 스캔은 KR_SCANNER_INTERVAL_MIN(기본 3분),
+    재계획은 KR_REPLAN_INTERVAL_MIN(기본 5분) 주기 — 새 급등 신호가 있을 때
+    run_morning_plan을 재호출해 기존 계획·실행 게이트 경로로 흘려보낸다.
+    실패는 전부 비치명(기존 러너 동작 불변).
+    """
+    import os as _o
+    import time as _t
+    try:
+        from deepsignal.live_trading.kr_market_scanner import run_kr_scan, scanner_enabled, _is_kr_market_hours
+        if not scanner_enabled() or not _is_kr_market_hours():
+            return state
+        now = _t.monotonic()
+        scan_iv = max(60.0, float(_o.environ.get("KR_SCANNER_INTERVAL_MIN", "3") or 3) * 60)
+        if now - _kr_scan_state["last_scan"] >= scan_iv:
+            _kr_scan_state["last_scan"] = now
+            res = run_kr_scan(db_path=db_path)
+            if res.get("recorded"):
+                import logging as _lg
+                _lg.getLogger(__name__).info("[KR스캔] %s", res)
+                print(f"[KR스캔] 급등주 {res.get('scanned')}건 → 신호 {res.get('recorded')}건: {res.get('top')}", flush=True)
+        replan_iv = max(120.0, float(_o.environ.get("KR_REPLAN_INTERVAL_MIN", "5") or 5) * 60)
+        if now - _kr_scan_state["last_replan"] >= replan_iv:
+            _kr_scan_state["last_replan"] = now
+            state = run_morning_plan(runner, db_path=db_path, state=state)
+            save_runner_state(runner.output_dir, state)
+    except Exception as exc:  # noqa: BLE001
+        import logging as _lg
+        _lg.getLogger(__name__).warning("[KR스캔] 비치명 오류: %s", exc)
+    return state
+
+
 def tick_runner(
     runner: DailyAIAutoRunnerConfig,
     *,
@@ -322,6 +359,11 @@ def tick_runner(
     if _due_scheduled(state.last_plan_date, runner.plan_time):
         state = run_morning_plan(runner, db_path=db_path, state=state)
         save_runner_state(runner.output_dir, state)
+
+    # ── 전 시장 급등주 스캔 + 장중 재계획 (공격성 L9-10에서 다이얼이 켬) ──
+    # KIS 순위 API로 워치리스트 밖 급등주를 신호화하고, 아침 1회 계획의 한계를
+    # 깨고 장중에도 새 후보가 계획·실행 경로(기존 게이트 그대로)에 오르게 한다.
+    state = _maybe_intraday_scan_and_replan(runner, db_path=db_path, state=state)
 
     tg = _telegram_cfg(runner)
     resume = try_resume_approved_execution(
