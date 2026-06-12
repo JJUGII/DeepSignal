@@ -301,6 +301,8 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     # 국내주식 전 시장 스캐너(KIS 순위 API) + 장중 재계획 — 워치리스트 47종 밖
     # 급등주 시야. 9~10단계만 (낮은 단계는 아침 1회 계획의 보수 운용 유지).
     sb("KR_SCANNER_ENABLED", not p.edge_gate_enforced)
+    # 해외주식 전 시장 스캐너(KIS 해외 조건검색) — 미국장 급등주 시야. 9~10단계만.
+    sb("OVERSEAS_SCANNER_ENABLED", not p.edge_gate_enforced)
     if _lvl >= 10:
         e["CRYPTO_REBUY_COOLDOWN_MINUTES"] = "3"
         e["CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR"] = "12"

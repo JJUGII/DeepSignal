@@ -337,6 +337,16 @@ def run_overseas_auto_tick(output_dir: str | Path, *, tg_notify=None,
     except Exception as exc:
         summary["sell_error"] = str(exc)
 
+    # 3.5) 전 시장 급등주 스캔(다이얼 L9-10) → overseas_movers 캐시 갱신
+    try:
+        from deepsignal.live_trading.overseas_market_scanner import run_overseas_scan, scanner_enabled
+        if scanner_enabled():
+            _sc = run_overseas_scan(output_dir=out)
+            if _sc.get("cached"):
+                summary["scan"] = _sc
+    except Exception as exc:
+        summary["scan_error"] = str(exc)
+
     # 4) plan 생성 + 매수 실행
     try:
         from deepsignal.live_trading.overseas_plan import build_overseas_order_plan
