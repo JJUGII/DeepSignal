@@ -1312,6 +1312,11 @@ def _get_open_orders_stock() -> list[dict]:
             rq = st.remaining_quantity or 0
             if rq and rq > 0:
                 raw = st.raw if isinstance(st.raw, dict) else {}
+                # 취소 주문(매도취소/매수취소 행)은 대기중이 아님 — 제외
+                _mr = raw.get("matched_row") or {}
+                _dvsn = str(_mr.get("sll_buy_dvsn_cd_name") or "")
+                if "취소" in _dvsn or "정정" in _dvsn:
+                    continue
                 org_no = (raw.get("ord_gno_brno") or raw.get("ORD_GNO_BRNO")
                           or raw.get("KRX_FWDG_ORD_ORGNO") or raw.get("krx_fwdg_ord_orgno") or "")
                 out.append({
