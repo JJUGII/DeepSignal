@@ -24,12 +24,20 @@ def _fmt_usd(v: float) -> str:
 
 
 def _summarize(items: list[dict]) -> dict:
-    """체결 목록 → {count, buy, sell, amount, fee}."""
-    buy = sum(1 for x in items if str(x.get("side")).lower() == "buy")
-    sell = sum(1 for x in items if str(x.get("side")).lower() == "sell")
-    amount = sum(float(x.get("trade_amount") or 0) for x in items)
+    """체결 목록 → 매수/매도 분리 집계."""
+    def _side(x: dict) -> str:
+        return str(x.get("side") or "").lower()
+    buys = [x for x in items if _side(x) == "buy"]
+    sells = [x for x in items if _side(x) == "sell"]
+    def _amt(rows: list[dict]) -> float:
+        return sum(float(x.get("trade_amount") or 0) for x in rows)
     fee = sum(float(x.get("fee") or 0) for x in items)
-    return {"count": len(items), "buy": buy, "sell": sell, "amount": amount, "fee": fee}
+    return {
+        "count": len(items),
+        "buy": len(buys), "sell": len(sells),
+        "buy_amount": _amt(buys), "sell_amount": _amt(sells),
+        "amount": _amt(items), "fee": fee,
+    }
 
 
 def build_market_open_report(label: str = "") -> str:
@@ -44,6 +52,10 @@ def build_market_open_report(label: str = "") -> str:
     today = datetime.now(_KST).date()
     d = today.isoformat()
     wd = _WEEKDAY_KR[today.weekday()]
+    is_weekend = today.weekday() >= 5
+    if is_weekend:
+        # 토/일: 국내·미국장 휴장 — '국내장 시작' 라벨은 오해라 교체
+        label = "주말 요약 (국내·미국장 휴장)"
 
     try:
         crypto = _fetch_crypto_trades(d, d, type_filter="all", symbol="")
@@ -54,7 +66,10 @@ def build_market_open_report(label: str = "") -> str:
     except Exception:
         stock = []
     try:
-        overseas = _fetch_overseas_trades(d, d, type_filter="all", symbol="")
+        # 해외 체결의 주문일자는 미국 날짜(KST-1일) — 직전 미국 세션
+        # (어젯밤 22:30~오늘 05:00 KST)을 포함하려면 어제~오늘로 조회.
+        d_prev = (today - timedelta(days=1)).isoformat()
+        overseas = _fetch_overseas_trades(d_prev, d, type_filter="all", symbol="")
     except Exception:
         overseas = []
 
@@ -67,15 +82,16 @@ def build_market_open_report(label: str = "") -> str:
     if label:
         header += f" · {label}"
 
-    def _block(icon: str, name: str, s: dict, usd: bool = False) -> str:
+    def _block(icon: str, name: str, s: dict, usd: bool = False, closed: bool = False) -> str:
         if s["count"] == 0:
-            return f"{icon} <b>{name}</b>\n  체결 없음"
-        amt = _fmt_usd(s["amount"]) if usd else _fmt_krw(s["amount"])
+            note = " (휴장)" if closed else ""
+            return f"{icon} <b>{name}</b>{note}\n  체결 없음"
+        fmt = _fmt_usd if usd else _fmt_krw
         line = (f"{icon} <b>{name}</b>\n"
-                f"  체결 {s['count']}건 (매수 {s['buy']} / 매도 {s['sell']})\n"
-                f"  거래금액 {amt}")
+                f"  🔴 매수 {s['buy']}건 · {fmt(s['buy_amount'])}\n"
+                f"  🔵 매도 {s['sell']}건 · {fmt(s['sell_amount'])}")
         if s["fee"] > 0:
-            line += f" · 수수료 {_fmt_krw(s['fee']) if not usd else _fmt_usd(s['fee'])}"
+            line += f"\n  수수료 {fmt(s['fee'])}"
         return line
 
     parts = [
@@ -83,9 +99,9 @@ def build_market_open_report(label: str = "") -> str:
         "",
         _block("🪙", "코인 (Upbit)", sc),
         "",
-        _block("🇰🇷", "국내주식 (KIS)", ss),
+        _block("🇰🇷", "국내주식 (KIS)", ss, closed=is_weekend),
         "",
-        _block("🌎", "해외주식 (KIS)", so, usd=True),
+        _block("🌎", "해외주식 (KIS)", so, usd=True, closed=is_weekend),
         "",
         f"합계: 총 {total}건",
     ]
