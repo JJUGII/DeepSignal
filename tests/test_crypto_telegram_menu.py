@@ -47,7 +47,7 @@ def test_any_message_shows_menu(monkeypatch) -> None:
         return {"ok": True}
 
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.telegram_send_menu_message",
+        "deepsignal.crypto_trading.telegram.menu.telegram_send_menu_message",
         fake_send,
     )
     upd = {"message": {"text": "안녕", "chat": {"id": "12345"}}}
@@ -58,7 +58,7 @@ def test_any_message_shows_menu(monkeypatch) -> None:
 
 def test_holdings_button(monkeypatch) -> None:
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu._send_menu_text",
+        "deepsignal.crypto_trading.telegram.menu._send_menu_text",
         lambda cfg, text=None, keyboard=None: {"ok": True},
     )
     upd = {"message": {"text": MENU_TEXT_HOLDINGS, "chat": {"id": "12345"}}}
@@ -69,7 +69,7 @@ def test_holdings_button(monkeypatch) -> None:
 
 def test_recommend_parent_shows_choice(monkeypatch) -> None:
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu._send_menu_text",
+        "deepsignal.crypto_trading.telegram.menu._send_menu_text",
         lambda cfg, text=None, keyboard=None: {"ok": True},
     )
     upd = {"message": {"text": MENU_TEXT_RECOMMEND, "chat": {"id": "12345"}}}
@@ -99,15 +99,15 @@ def test_holdings_message_includes_combined_summary(monkeypatch) -> None:
         return {"ok": True}
 
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu._send_menu_text",
+        "deepsignal.crypto_trading.telegram.menu._send_menu_text",
         fake_send,
     )
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.kis_holdings_totals",
+        "deepsignal.crypto_trading.telegram.menu.kis_holdings_totals",
         lambda db: {"cost_krw": 280_000, "value_krw": 292_500, "cash_krw": 219_970},
     )
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.format_kis_holdings_telegram",
+        "deepsignal.crypto_trading.telegram.menu.format_kis_holdings_telegram",
         lambda db: ["=== 국내주식 (KIS) ===", "  005930"],
     )
     upd = {"message": {"text": MENU_TEXT_HOLDINGS, "chat": {"id": "12345"}}}
@@ -126,7 +126,7 @@ def test_runner_stop_start_and_status(monkeypatch, tmp_path) -> None:
         sent.append(text or "")
         return {"ok": True}
 
-    monkeypatch.setattr("deepsignal.crypto_trading.crypto_telegram_menu._send_menu_text", fake_send)
+    monkeypatch.setattr("deepsignal.crypto_trading.telegram.menu._send_menu_text", fake_send)
     cfg = CryptoTelegramConfig(output_dir=str(tmp_path), bot_token="test-token", allowed_chat_id="12345")
     br = _br()
 

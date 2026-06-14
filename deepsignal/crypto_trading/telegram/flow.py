@@ -14,7 +14,8 @@ from typing import Any
 import requests
 
 from deepsignal.crypto_trading.crypto_order_plan import CRYPTO_PLAN_JSON, CryptoOrderPlan, load_crypto_plan
-from deepsignal.crypto_trading.upbit_broker import UpbitBroker, UpbitOrderResult
+from deepsignal.crypto_trading.broker.interface import CryptoBroker, CryptoOrderResult
+from deepsignal.crypto_trading.broker.selection import crypto_broker_label, normalize_crypto_broker_name
 from deepsignal.live_trading.time_utils import now_kst, now_kst_iso, parse_datetime_with_default_tz
 
 CRYPTO_APPROVAL_JSON = "crypto_telegram_approval_request.json"
@@ -78,7 +79,14 @@ def _plan_hash(plan_path: Path) -> str:
     return hashlib.sha256(plan_path.read_bytes()).hexdigest()
 
 
-def format_approval_message(plan: CryptoOrderPlan) -> str:
+def _active_exchange_label(*, broker: CryptoBroker | None = None) -> str:
+    if broker is not None:
+        return crypto_broker_label(getattr(broker, "exchange_id", None))
+    return crypto_broker_label(normalize_crypto_broker_name())
+
+
+def format_approval_message(plan: CryptoOrderPlan, *, exchange_label: str | None = None) -> str:
+    ex = exchange_label or _active_exchange_label()
     if plan.side.lower() == "sell":
         trigger = (plan.sell_trigger or "").lower()
         tp = float(plan.take_profit_pct or 0)
@@ -92,7 +100,7 @@ def format_approval_message(plan: CryptoOrderPlan) -> str:
                     "• 현재 익절 기준에 거의 도달했습니다.",
                     "• 일부 또는 전량 매도를 검토합니다.",
                     "",
-                    "승인 시 업비트 매도 주문이 실행됩니다.",
+                    f"승인 시 {ex} 매도 주문이 실행됩니다.",
                 ]
             )
         if trigger == "near_stop_loss":
@@ -106,7 +114,7 @@ def format_approval_message(plan: CryptoOrderPlan) -> str:
                     "• 손절 기준에 근접했습니다.",
                     "• 일부 또는 전량 매도를 검토합니다.",
                     "",
-                    "승인 시 업비트 매도 주문이 실행됩니다.",
+                    f"승인 시 {ex} 매도 주문이 실행됩니다.",
                 ]
             )
         header = (
@@ -126,7 +134,7 @@ def format_approval_message(plan: CryptoOrderPlan) -> str:
                 f"• 예상금액: 약 {plan.krw_amount:,.0f}원",
                 f"• 이유: {plan.reason}",
                 "",
-                "승인 시 업비트 매도 주문이 실행됩니다.",
+                f"승인 시 {ex} 매도 주문이 실행됩니다.",
             ]
         )
     score_lines: list[str] = []
@@ -154,7 +162,7 @@ def format_approval_message(plan: CryptoOrderPlan) -> str:
             *score_lines,
             f"• 이유: {plan.reason}",
             "",
-            "승인 시에만 업비트 매수 주문이 실행됩니다.",
+            f"승인 시에만 {ex} 매수 주문이 실행됩니다.",
         ]
     )
 
@@ -235,7 +243,7 @@ def create_crypto_approval_request(
         krw_amount=plan.krw_amount,
         current_price=plan.limit_price,
         reason=plan.reason,
-        message_text=format_approval_message(plan),
+        message_text=format_approval_message(plan, exchange_label=_active_exchange_label()),
     )
     out = Path(cfg.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -286,14 +294,14 @@ def _write_audit(output_dir: str | Path, payload: dict[str, Any]) -> Path:
 
 
 def execute_approved_crypto_order(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     plan: CryptoOrderPlan,
     *,
     execute: bool,
     output_dir: str | Path = "outputs",
     runner_state: dict[str, Any] | None = None,
     sell_volume_fraction: float = 1.0,
-) -> UpbitOrderResult:
+) -> CryptoOrderResult:
     from pathlib import Path
 
     from deepsignal.crypto_trading.crypto_execution_engine import (
@@ -375,8 +383,13 @@ def execute_approved_crypto_order(
     return result
 
 
-def format_execution_report(plan: CryptoOrderPlan, result: UpbitOrderResult, *,
-                             skip_if_fill_follows: bool = False) -> str:
+def format_execution_report(
+    plan: CryptoOrderPlan,
+    result: CryptoOrderResult,
+    *,
+    skip_if_fill_follows: bool = False,
+    exchange_label: str | None = None,
+) -> str:
     """주문 접수 알림.
     skip_if_fill_follows=True 이면 체결 폴링이 뒤따를 경우 빈 문자열을 반환해
     첫 번째 메시지를 생략하고 체결 결과 메시지만 전송합니다.
@@ -385,7 +398,11 @@ def format_execution_report(plan: CryptoOrderPlan, result: UpbitOrderResult, *,
     if skip_if_fill_follows and has_fill_follow:
         return ""   # 체결 완료 메시지로 대체
 
-    blocked = result.status in ("UPBIT_DRY_RUN_BLOCKED", "CRYPTO_PAPER_MODE_BLOCKED")
+    blocked = result.status in (
+        "UPBIT_DRY_RUN_BLOCKED",
+        "BITHUMB_DRY_RUN_BLOCKED",
+        "CRYPTO_PAPER_MODE_BLOCKED",
+    )
     if blocked:
         return ""   # 페이퍼 모드는 알림 생략
 
@@ -393,8 +410,9 @@ def format_execution_report(plan: CryptoOrderPlan, result: UpbitOrderResult, *,
     icon    = "🔴" if is_sell else "🟢"
     side_ko = "매도" if is_sell else "매수"
     coin    = plan.market.upper().split("-")[-1] if "-" in plan.market else plan.market
+    ex = exchange_label or _active_exchange_label()
     lines = [
-        f"{icon} {side_ko} 접수  ·  Upbit",
+        f"{icon} {side_ko} 접수  ·  {ex}",
         f"*{plan.market}*",
     ]
     if result.price:
@@ -406,9 +424,9 @@ def format_execution_report(plan: CryptoOrderPlan, result: UpbitOrderResult, *,
 
 def follow_up_order_fill(
     cfg: CryptoTelegramConfig,
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     plan: CryptoOrderPlan,
-    result: UpbitOrderResult,
+    result: CryptoOrderResult,
 ) -> dict[str, Any]:
     """Poll order by uuid and send Telegram + audit. No new orders."""
     from deepsignal.crypto_trading.crypto_order_fill import (
@@ -468,7 +486,7 @@ def process_crypto_telegram_update(
     update: dict[str, Any],
     *,
     cfg: CryptoTelegramConfig,
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     execute_on_approve: bool = True,
     follow_fill: bool = True,
 ) -> dict[str, Any] | None:
@@ -534,7 +552,11 @@ def process_crypto_telegram_update(
         sell_volume_fraction=frac,
     )
     save_runner_state(cfg.output_dir, runner_state)
-    report = format_execution_report(plan, result)
+    report = format_execution_report(
+        plan,
+        result,
+        exchange_label=crypto_broker_label(broker.exchange_id),
+    )
     from deepsignal.crypto_trading.crypto_recommendation_outcomes import apply_crypto_trade_pipeline
 
     audit = {
@@ -561,7 +583,7 @@ def process_crypto_telegram_update(
 
 def poll_crypto_telegram_until_done(
     cfg: CryptoTelegramConfig,
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     *,
     max_wait_seconds: float = 600.0,
     runner_cfg: Any | None = None,

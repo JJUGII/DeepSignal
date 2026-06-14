@@ -472,6 +472,35 @@ tr:hover td { background: rgba(255,255,255,.06); color: var(--text-primary); }
   border-bottom: 1px solid var(--border);
 }
 
+.exchange-settings-panel {
+  margin: 16px 0 8px;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.03);
+}
+.exchange-settings-header {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.exchange-settings-title {
+  font-size: 14px; font-weight: 600; color: var(--text-primary);
+}
+.exchange-runner-note {
+  margin-top: 14px; padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,140,0,.25);
+  background: rgba(255,140,0,.06);
+  font-size: 12px; color: var(--text-muted); line-height: 1.5;
+}
+.exchange-runner-details {
+  margin-top: 12px; font-size: 12px; color: var(--text-muted);
+}
+.exchange-runner-details summary {
+  cursor: pointer; color: var(--text-secondary); margin-bottom: 8px;
+}
+
 /* 설정됨 표시 점 */
 .set-dot { color: var(--running); font-size: 9px; vertical-align: middle; margin-left: 3px; }
 
@@ -1724,6 +1753,7 @@ tr:hover td { background: rgba(255,255,255,.06); color: var(--text-primary); }
   vertical-align: middle; margin-left: 5px;
 }
 .exchange-badge.upbit   { background: rgba(255,255,255,.12);  color: #b6b6bd;  border: 1px solid rgba(255,255,255,.2); }
+.exchange-badge.bithumb { background: rgba(255,140,0,.15);   color: #ffb366;  border: 1px solid rgba(255,140,0,.35); }
 .exchange-badge.binance { background: rgba(240,185,11,.1);  color: #F0B90B;  border: 1px solid rgba(240,185,11,.2); }
 .exchange-badge.kis     { background: rgba(255,255,255,.12); color: #d4d4d8;  border: 1px solid rgba(255,255,255,.2); }
 

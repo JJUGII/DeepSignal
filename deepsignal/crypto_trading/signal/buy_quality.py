@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from deepsignal.crypto_trading.upbit_broker import UpbitBroker, UpbitTicker
+from deepsignal.crypto_trading.broker.interface import CryptoBroker, CryptoTicker
 from deepsignal.scoring.analysis_conditions import DEFAULT_ANALYSIS_CONDITIONS
 
 _CRYPTO = DEFAULT_ANALYSIS_CONDITIONS.crypto
@@ -99,7 +99,7 @@ def golden_cross_status_1d(closes: list[float], lookback: int = 5) -> str | None
     return "above" if e50[-1] >= e200[-1] else "below"
 
 
-def _volume_ratio(candles: list[dict[str, Any]], ticker: UpbitTicker) -> float | None:
+def _volume_ratio(candles: list[dict[str, Any]], ticker: CryptoTicker) -> float | None:
     values: list[float] = []
     for c in candles:
         vol = float(c.get("candle_acc_trade_volume") or 0)
@@ -116,9 +116,9 @@ def _volume_ratio(candles: list[dict[str, Any]], ticker: UpbitTicker) -> float |
 
 
 def evaluate_crypto_buy_quality(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     market: str,
-    ticker: UpbitTicker,
+    ticker: CryptoTicker,
     *,
     cfg: CryptoBuyQualityConfig | None = None,
 ) -> tuple[bool, str, float, dict[str, Any]]:
@@ -128,14 +128,15 @@ def evaluate_crypto_buy_quality(
     if not cfg.enabled:
         return True, "quality_filters_disabled", 1.0, diag
 
+    exchange = getattr(broker, "exchange_id", "거래소")
     try:
         candles = broker.get_daily_candles(market, count=200)
     except Exception:
-        diag["candles_error"] = "upbit_market_unavailable"
-        return False, "Upbit 미상장/조회불가 종목", 0.0, diag
+        diag["candles_error"] = "market_unavailable"
+        return False, f"{exchange} 미상장/조회불가 종목", 0.0, diag
     if not candles:
         diag["candles_error"] = "no_candles"
-        return False, "Upbit 일봉 없음", 0.0, diag
+        return False, f"{exchange} 일봉 없음", 0.0, diag
     closes = [float(c.get("trade_price") or 0) for c in candles if float(c.get("trade_price") or 0) > 0]
     rsi = _latest_rsi(closes)
     diag["rsi_14"] = rsi

@@ -10,11 +10,8 @@ from typing import Any
 
 # 화면에 노출할 설정 정의 (key, label, type, section, description)
 SETTINGS_SCHEMA: list[dict[str, Any]] = [
-    # ── 🔒 개인정보 (API 키 / 계좌 / 토큰) ────────────────────────
-    # Upbit
-    {"key": "UPBIT_ACCESS_KEY",    "label": "Upbit Access Key",  "type": "secret",  "section": "private", "group": "Upbit API",    "desc": "Upbit Open API Access Key"},
-    {"key": "UPBIT_SECRET_KEY",    "label": "Upbit Secret Key",  "type": "secret",  "section": "private", "group": "Upbit API",    "desc": "Upbit Open API Secret Key"},
-    # KIS
+    # ── 🔒 개인정보 (KIS / Telegram / Webhook) ───────────────────
+    # 코인 API 키는 「코인 (거래소)」 탭에서 거래소 선택 시 표시
     {"key": "KIS_APP_KEY",         "label": "KIS App Key",       "type": "secret",  "section": "private", "group": "KIS API",      "desc": "한국투자증권 API App Key"},
     {"key": "KIS_APP_SECRET",      "label": "KIS App Secret",    "type": "secret",  "section": "private", "group": "KIS API",      "desc": "한국투자증권 API App Secret"},
     {"key": "KIS_ACCOUNT_NO",      "label": "KIS 계좌번호",       "type": "secret",  "section": "private", "group": "KIS API",      "desc": "CANO 8자리 (예: 12345678)"},
@@ -26,32 +23,45 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
     # Webhook
     {"key": "WEBHOOK_URL",         "label": "Webhook URL",       "type": "secret",  "section": "private", "group": "알림 서비스", "desc": "Discord / Slack 웹훅 URL"},
 
-    # ── Upbit 매매 설정 ────────────────────────────────────────────
-    {"key": "UPBIT_DRY_RUN",       "label": "Dry Run",           "type": "bool",    "section": "upbit",
-     "desc": "활성화하면 실제 주문을 거래소에 보내지 않고 로그만 기록합니다. 설정을 테스트할 때 켜두세요."},
-    {"key": "CRYPTO_PAPER_MODE",   "label": "페이퍼 모드",        "type": "bool",    "section": "upbit",
+    # ── 코인 (거래소) — CRYPTO_BROKER 선택에 따라 Upbit/Bithumb 패널 전환 ──
+    {"key": "CRYPTO_BROKER",       "label": "활성 거래소 (차트·주문)", "type": "select",  "section": "upbit", "exchange": "common",
+     "desc": "차트·호가·Web 승인·자동매매 러너에 사용할 거래소입니다. 대시보드는 Upbit·Bithumb 잔고를 항상 함께 표시합니다.",
+     "options": ["upbit", "bithumb"]},
+    {"key": "UPBIT_ACCESS_KEY",    "label": "Access Key",        "type": "secret",  "section": "upbit", "exchange": "upbit",
+     "desc": "Upbit Open API Access Key (https://upbit.com/mypage/open_api_management)"},
+    {"key": "UPBIT_SECRET_KEY",    "label": "Secret Key",        "type": "secret",  "section": "upbit", "exchange": "upbit",
+     "desc": "Upbit Open API Secret Key"},
+    {"key": "UPBIT_DRY_RUN",       "label": "Dry Run",           "type": "bool",    "section": "upbit", "exchange": "upbit",
+     "desc": "ON이면 Upbit 실주문을 보내지 않습니다. OFF + 페이퍼 모드 OFF 시 실거래 가능."},
+    {"key": "BITHUMB_API_KEY",     "label": "API Key",           "type": "secret",  "section": "upbit", "exchange": "bithumb",
+     "desc": "Bithumb Open API 2.x API Key"},
+    {"key": "BITHUMB_SECRET_KEY",  "label": "Secret Key",        "type": "secret",  "section": "upbit", "exchange": "bithumb",
+     "desc": "Bithumb Open API 2.x Secret Key"},
+    {"key": "BITHUMB_DRY_RUN",     "label": "Dry Run",           "type": "bool",    "section": "upbit", "exchange": "bithumb",
+     "desc": "ON이면 Bithumb 실주문을 보내지 않습니다. OFF + 페이퍼 모드 OFF 시 실거래 가능."},
+    {"key": "CRYPTO_PAPER_MODE",   "label": "페이퍼 모드",        "type": "bool",    "section": "upbit", "exchange": "common",
      "desc": "가상 잔고로 매매를 시뮬레이션합니다. 첫 실행 후 14일이 지나야 실거래로 전환되는 안전장치입니다."},
-    {"key": "CRYPTO_AUTO_EXECUTE_WITHOUT_APPROVAL", "label": "무승인 자동실행(매수+매도)", "type": "bool", "section": "upbit",
+    {"key": "CRYPTO_AUTO_EXECUTE_WITHOUT_APPROVAL", "label": "무승인 자동실행(매수+매도)", "type": "bool", "section": "upbit", "exchange": "common",
      "desc": "STRONG 신호 발생 즉시 텔레그램 승인 없이 자동 매수·매도를 실행합니다. 매수(GSQS 임계값 초과)와 ATR 기반 TP/SL 매도가 모두 자동으로 처리됩니다."},
-    {"key": "CRYPTO_GATE_MODE",    "label": "Gate 모드",          "type": "select",  "section": "upbit",
+    {"key": "CRYPTO_GATE_MODE",    "label": "Gate 모드",          "type": "select",  "section": "upbit", "exchange": "upbit",
      "desc": "매수 진입 판단 방식을 선택합니다. hybrid=전통 지표+ML 혼합(권장), ml_primary=ML 결과 우선, ml_only=ML 신호만 사용",
      "options": ["hybrid", "ml_primary", "ml_only"]},
-    {"key": "CRYPTO_ENSEMBLE_MODE","label": "Ensemble 모드",      "type": "select",  "section": "upbit",
+    {"key": "CRYPTO_ENSEMBLE_MODE","label": "Ensemble 모드",      "type": "select",  "section": "upbit", "exchange": "upbit",
      "desc": "여러 ML 모델의 신호를 합치는 방식입니다. unanimous=전 모델 동의 시만 매수(보수적), weighted=가중 평균(균형), lgbm_only=LGBM 모델만 사용",
      "options": ["unanimous", "weighted", "lgbm_only"]},
-    {"key": "CRYPTO_ML_BUY_GATE",  "label": "ML 매수 게이트",    "type": "bool",    "section": "upbit",
+    {"key": "CRYPTO_ML_BUY_GATE",  "label": "ML 매수 게이트",    "type": "bool",    "section": "upbit", "exchange": "upbit",
      "desc": "머신러닝 모델의 예측 승률이 55% 이상일 때만 매수를 허용하는 필터입니다. 불확실한 구간 진입을 차단합니다."},
-    {"key": "CRYPTO_ML_ENSEMBLE",  "label": "ML 앙상블",          "type": "bool",    "section": "upbit",
+    {"key": "CRYPTO_ML_ENSEMBLE",  "label": "ML 앙상블",          "type": "bool",    "section": "upbit", "exchange": "upbit",
      "desc": "LGBM(의사결정 트리 계열), LSTM(시계열 딥러닝), 규칙 기반 3가지 모델을 동시에 실행해 합산한 결과로 최종 신호를 생성합니다."},
-    {"key": "CRYPTO_DYNAMIC_SPREAD_ENABLED", "label": "스프레드 게이트", "type": "bool", "section": "upbit",
+    {"key": "CRYPTO_DYNAMIC_SPREAD_ENABLED", "label": "스프레드 게이트", "type": "bool", "section": "upbit", "exchange": "upbit",
      "desc": "매수 직전 호가창(오더북) 스프레드를 실시간 측정해 스프레드가 넓을 때는 진입을 차단합니다. 슬리피지를 줄이는 품질 필터입니다."},
-    {"key": "CRYPTO_SPREAD_HARD_MAX_PCT", "label": "최대 허용 스프레드 (%)", "type": "text", "section": "upbit",
+    {"key": "CRYPTO_SPREAD_HARD_MAX_PCT", "label": "최대 허용 스프레드 (%)", "type": "text", "section": "upbit", "exchange": "upbit",
      "desc": "이 값(%)을 초과하는 스프레드가 감지되면 무조건 매수를 차단합니다. 기본값 0.80. 값이 낮을수록 보수적입니다."},
-    {"key": "CRYPTO_DYNAMIC_TP_SL_ENABLED", "label": "동적 TP/SL", "type": "bool", "section": "upbit",
+    {"key": "CRYPTO_DYNAMIC_TP_SL_ENABLED", "label": "동적 TP/SL", "type": "bool", "section": "upbit", "exchange": "upbit",
      "desc": "시장 상황(강세/약세)에 따라 익절·손절 기준을 ATR 배수로 자동 조정합니다. 꺼두면 고정 TP/SL 비율을 사용합니다."},
-    {"key": "SCALP_SIGNAL_COOLDOWN_MINUTES", "label": "신호 쿨다운 (분)", "type": "text", "section": "upbit",
+    {"key": "SCALP_SIGNAL_COOLDOWN_MINUTES", "label": "신호 쿨다운 (분)", "type": "text", "section": "upbit", "exchange": "upbit",
      "desc": "같은 심볼에서 신호가 연속 발생할 때 알림 전송을 억제하는 시간(분)입니다. 기본값 15. 0으로 설정하면 쿨다운 없음."},
-    {"key": "SCALP_SIGNAL_MAX_PER_HOUR", "label": "시간당 최대 신호 수", "type": "text", "section": "upbit",
+    {"key": "SCALP_SIGNAL_MAX_PER_HOUR", "label": "시간당 최대 신호 수", "type": "text", "section": "upbit", "exchange": "upbit",
      "desc": "1시간 내 Telegram으로 전송할 수 있는 최대 신호 개수입니다. 기본값 20. 알림 과부하 방지용 안전장치입니다."},
 
     # ── KIS 매매 설정 ──────────────────────────────────────────────
@@ -89,14 +99,14 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
 
 SECTION_LABELS = {
     "private":  "🔒 개인정보",
-    "upbit":    "Upbit (코인)",
+    "upbit":    "코인 (거래소)",
     "kis":      "KIS (주식)",
     "telegram": "Telegram",
     "system":   "시스템",
 }
 
 # 개인정보 탭 안의 그룹 순서
-PRIVATE_GROUPS = ["Upbit API", "KIS API", "Telegram", "알림 서비스"]
+PRIVATE_GROUPS = ["KIS API", "Telegram", "알림 서비스"]
 
 _SECRET_MASK = "••••••••"
 _SHOW_LAST = 4  # 시크릿 마지막 N자 표시
@@ -165,6 +175,8 @@ def read_settings(env_path: Path) -> dict[str, Any]:
             }
             if "options" in item:
                 entry["options"] = item["options"]
+        if "exchange" in item:
+            entry["exchange"] = item["exchange"]
         if "group" in item:
             entry["group"] = item["group"]
         sections[item["section"]].append(entry)

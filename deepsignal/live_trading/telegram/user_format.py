@@ -169,6 +169,7 @@ def format_holdings_telegram_brief(
     kis_lines: list[str],
     crypto_lines: list[str],
     upbit_krw: float,
+    crypto_exchange_label: str = "Upbit",
 ) -> str:
     """Single-screen holdings without duplicate per-coin blocks."""
     out: list[str] = ["[DeepSignal — 현재 자산]", ""]
@@ -178,5 +179,5 @@ def format_holdings_telegram_brief(
     out.append("")
     out.extend(crypto_lines)
     out.append("")
-    out.append(f"Upbit KRW 가용: {upbit_krw:,.0f}원")
+    out.append(f"{crypto_exchange_label} KRW 가용: {upbit_krw:,.0f}원")
     return "\n".join(out)[:4000]

@@ -183,6 +183,15 @@ def start_runner(output_dir: Path, project_root: Path) -> tuple[bool, str]:
     if status["running"]:
         return False, "이미 실행 중입니다"
 
+    try:
+        from dotenv import load_dotenv
+        from deepsignal.crypto_trading.broker.selection import normalize_crypto_broker_name
+
+        load_dotenv(str(project_root / ".env"), override=False)
+        broker_name = normalize_crypto_broker_name()
+    except Exception:
+        broker_name = "upbit"
+
     if _IS_MACOS and _launchd_service_exists():
         try:
             uid = os.getuid()
@@ -199,7 +208,7 @@ def start_runner(output_dir: Path, project_root: Path) -> tuple[bool, str]:
     cmd = [
         python, str(project_root / "main.py"),
         "crypto-auto-runner",
-        "--broker", "upbit",
+        "--broker", broker_name,
         "--interval-minutes", "1.0",
         "--output-dir", str(output_dir),
         "--execute",

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 import requests
@@ -12,6 +11,12 @@ import requests
 from deepsignal.crypto_trading.crypto_paper_mode import orders_blocked_by_paper_or_dry_run
 from deepsignal.crypto_trading.upbit_auth import authorization_header
 from deepsignal.crypto_trading.upbit_config import UpbitConfig
+from deepsignal.crypto_trading.broker.interface import (
+    CryptoBalance,
+    CryptoHolding,
+    CryptoOrderResult,
+    CryptoTicker,
+)
 from deepsignal.scoring.analysis_conditions import DEFAULT_ANALYSIS_CONDITIONS
 
 UPBIT_API_BASE = "https://api.upbit.com/v1"
@@ -24,57 +29,14 @@ UPBIT_RETRY_STATUS_CODES = frozenset({429})
 UPBIT_RETRY_DELAYS_SEC = (0.5, 1.0, 2.0)
 UPBIT_MAX_RETRIES = 3
 
+# Backward-compatible aliases
+UpbitBalance = CryptoBalance
+UpbitTicker = CryptoTicker
+UpbitOrderResult = CryptoOrderResult
+
 
 class UpbitBrokerError(ValueError):
     pass
-
-
-@dataclass
-class UpbitBalance:
-    currency: str
-    balance: float
-    locked: float
-    avg_buy_price: float
-
-
-@dataclass
-class CryptoHolding:
-    market: str
-    currency: str
-    balance: float
-    locked: float
-    available: float
-    avg_buy_price: float
-    current_price: float
-    valuation_krw: float
-    pnl_pct: float
-    pnl_krw: float
-
-    @property
-    def total_quantity(self) -> float:
-        return self.balance + self.locked
-
-
-@dataclass
-class UpbitTicker:
-    market: str
-    trade_price: float
-    signed_change_rate: float
-    acc_trade_price_24h: float
-
-
-@dataclass
-class UpbitOrderResult:
-    market: str
-    side: str
-    order_type: str
-    price: float
-    volume: float
-    krw_amount: float
-    status: str
-    uuid: str | None = None
-    dry_run: bool = True
-    raw: dict[str, Any] | None = None
 
 
 class UpbitBroker:
@@ -94,6 +56,10 @@ class UpbitBroker:
     @property
     def config(self) -> UpbitConfig:
         return self._config
+
+    @property
+    def exchange_id(self) -> str:
+        return "upbit"
 
     def _orders_blocked(self, *, execute: bool) -> bool:
         return orders_blocked_by_paper_or_dry_run(
@@ -170,20 +136,20 @@ class UpbitBroker:
         except (TypeError, ValueError):
             return 0.0
 
-    def get_balances(self) -> list[UpbitBalance]:
+    def get_balances(self) -> list[CryptoBalance]:
         if self._config.dry_run and self._config.is_demo:
             return [
-                UpbitBalance(currency="KRW", balance=100_000.0, locked=0.0, avg_buy_price=0.0),
-                UpbitBalance(currency="BTC", balance=0.0, locked=0.0, avg_buy_price=0.0),
-                UpbitBalance(currency="XRP", balance=4.99251123, locked=0.0, avg_buy_price=2_003.0),
+                CryptoBalance(currency="KRW", balance=100_000.0, locked=0.0, avg_buy_price=0.0),
+                CryptoBalance(currency="BTC", balance=0.0, locked=0.0, avg_buy_price=0.0),
+                CryptoBalance(currency="XRP", balance=4.99251123, locked=0.0, avg_buy_price=2_003.0),
             ]
         raw = self._request("GET", "/accounts")
         if not isinstance(raw, list):
             raise UpbitBrokerError(f"unexpected accounts response: {raw!r}")
-        out: list[UpbitBalance] = []
+        out: list[CryptoBalance] = []
         for row in raw:
             out.append(
-                UpbitBalance(
+                CryptoBalance(
                     currency=str(row.get("currency", "")),
                     balance=self._parse_amount(row.get("balance")),
                     locked=self._parse_amount(row.get("locked")),

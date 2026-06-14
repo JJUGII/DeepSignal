@@ -353,7 +353,7 @@ def launchd_config_from_namespace(args: Any) -> CryptoLaunchdRunnerConfig:
 
 
 def add_crypto_launchd_arguments(parser: Any) -> None:
-    parser.add_argument("--broker", type=str, default="upbit", choices=["upbit"])
+    parser.add_argument("--broker", type=str, default="upbit", choices=["upbit", "bithumb"])
     parser.add_argument("--interval-minutes", type=float, default=1.0, metavar="MIN")
     parser.add_argument(
         "--max-order-value",

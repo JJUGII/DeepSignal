@@ -16,7 +16,7 @@ from deepsignal.crypto_trading.signal.universe import (
     market_display_name,
     select_markets_for_buy_scan,
 )
-from deepsignal.crypto_trading.upbit_broker import UpbitBroker, UpbitTicker
+from deepsignal.crypto_trading.broker.interface import CryptoBroker, CryptoTicker
 
 _SYNTHETIC_ACC_TRADE_24H = 1.0
 
@@ -65,13 +65,13 @@ def tickers_from_live_state(
     *,
     max_markets: int | None = None,
     valid_upbit_markets: frozenset[str] | None = None,
-) -> dict[str, UpbitTicker]:
+) -> dict[str, CryptoTicker]:
     payload = _load_live_payload(output_dir)
     if payload is None:
         return {}
 
     orderbooks = payload.get("orderbooks") or {}
-    out: dict[str, UpbitTicker] = {}
+    out: dict[str, CryptoTicker] = {}
     if isinstance(orderbooks, dict):
         for binance_sym, book in orderbooks.items():
             if not isinstance(book, dict):
@@ -82,7 +82,7 @@ def tickers_from_live_state(
             price = _mid_price_from_orderbook(book)
             if price <= 0:
                 continue
-            out[market] = UpbitTicker(
+            out[market] = CryptoTicker(
                 market=market,
                 trade_price=price,
                 signed_change_rate=0.0,
@@ -107,7 +107,7 @@ def tickers_from_live_state(
             price = float(btc.get("price", 0) or 0)
         if price <= 0:
             continue
-        out[market] = UpbitTicker(
+        out[market] = CryptoTicker(
             market=market,
             trade_price=price,
             signed_change_rate=0.0,
@@ -119,7 +119,7 @@ def tickers_from_live_state(
 
 
 def resolve_crypto_markets_live_first(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     *,
     config: CryptoUniverseConfig | None = None,
     holdings_markets: tuple[str, ...] | None = None,

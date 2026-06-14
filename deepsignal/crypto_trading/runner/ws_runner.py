@@ -29,7 +29,9 @@ from deepsignal.crypto_trading.runner.auto_runner import (
     load_runner_state,
     save_runner_state,
 )
-from deepsignal.crypto_trading.upbit_broker import CryptoHolding, UpbitBroker
+from typing import Any
+
+from deepsignal.crypto_trading.upbit_broker import CryptoHolding
 from deepsignal.live_trading.time_utils import now_kst_iso
 
 logger = logging.getLogger(__name__)
@@ -197,6 +199,28 @@ class SharedRunnerState:
 # Thread 1: WebSocket
 # ────────────────────────────────────────────
 
+def _poll_thread_main(
+    broker: Any,
+    shared: "SharedRunnerState",
+    *,
+    interval_sec: float = 2.0,
+) -> None:
+    """REST ticker 폴링 (Bithumb 등 WebSocket 미지원 거래소)."""
+    while not shared.stop_event.is_set():
+        markets = shared.get_markets()
+        if markets:
+            try:
+                for i in range(0, len(markets), 50):
+                    batch = markets[i : i + 50]
+                    ticker_map = broker.get_tickers(batch)
+                    for mkt, ticker in ticker_map.items():
+                        shared.on_price(mkt, float(ticker.trade_price))
+            except Exception as exc:
+                logger.warning("poll: ticker error: %s", exc)
+        shared.stop_event.wait(timeout=interval_sec)
+    logger.info("poll thread: 종료")
+
+
 def _ws_thread_main(shared: SharedRunnerState) -> None:
     """Upbit WebSocket 수신 루프. asyncio 이벤트 루프를 이 스레드에서 운영."""
     from deepsignal.crypto_trading.crypto_ws_price_stream import stream_upbit_prices
@@ -242,7 +266,7 @@ def _ws_thread_main(shared: SharedRunnerState) -> None:
 # ────────────────────────────────────────────
 
 def _build_sell_thresholds(
-    broker: UpbitBroker,
+    broker: Any,
     cfg: CryptoAutoRunnerConfig,
     runner_state: dict[str, Any],
 ) -> dict[str, SellThreshold]:
@@ -296,7 +320,7 @@ def _build_sell_thresholds(
     return thresholds
 
 
-def _universe_markets(broker: UpbitBroker, cfg: CryptoAutoRunnerConfig) -> set[str]:
+def _universe_markets(broker: Any, cfg: CryptoAutoRunnerConfig) -> set[str]:
     """구독 대상 마켓 = universe 상위 N종목 (WebSocket 사전 구독용)."""
     from deepsignal.crypto_trading.crypto_universe import CryptoUniverseConfig, resolve_crypto_markets
 
@@ -313,7 +337,7 @@ def _universe_markets(broker: UpbitBroker, cfg: CryptoAutoRunnerConfig) -> set[s
 
 
 def _analysis_thread_main(
-    broker: UpbitBroker,
+    broker: Any,
     shared: SharedRunnerState,
     cfg: CryptoAutoRunnerConfig,
     *,
@@ -531,7 +555,7 @@ def _analysis_thread_main(
 # ────────────────────────────────────────────
 
 def _execute_sell_signal(
-    broker: UpbitBroker,
+    broker: Any,
     sig: PriceSignal,
     shared: SharedRunnerState,
     cfg: CryptoAutoRunnerConfig,
@@ -608,7 +632,7 @@ def _execute_sell_signal(
 
 
 def _execute_buy_signal(
-    broker: UpbitBroker,
+    broker: Any,
     sig: PriceSignal,
     shared: SharedRunnerState,
     cfg: CryptoAutoRunnerConfig,
@@ -686,7 +710,7 @@ def _execute_buy_signal(
 
 
 def _execution_thread_main(
-    broker: UpbitBroker,
+    broker: Any,
     shared: SharedRunnerState,
     cfg: CryptoAutoRunnerConfig,
     *,
@@ -715,7 +739,7 @@ def _execution_thread_main(
 # ────────────────────────────────────────────
 
 def _order_mgmt_thread_main(
-    broker: UpbitBroker,
+    broker: Any,
     shared: SharedRunnerState,
     cfg: CryptoAutoRunnerConfig,
     *,
@@ -753,7 +777,7 @@ def _order_mgmt_thread_main(
 # ────────────────────────────────────────────
 
 def run_crypto_ws_runner_loop(
-    broker: UpbitBroker,
+    broker: Any,
     cfg: CryptoAutoRunnerConfig,
     *,
     execute: bool = False,
@@ -767,17 +791,27 @@ def run_crypto_ws_runner_loop(
 
     env_result = ensure_crypto_runtime_env()
     emit_crypto_runner_startup_log(execute=execute, env_result=env_result)
-    logger.info("ws-runner: 시작 (execute=%s)", execute)
+    logger.info("ws-runner: 시작 (execute=%s, broker=%s)", execute, getattr(broker, "exchange_id", "?"))
 
     shared = SharedRunnerState()
-
-    threads = [
-        threading.Thread(
+    exchange_id = str(getattr(broker, "exchange_id", "upbit") or "upbit").lower()
+    if exchange_id == "bithumb":
+        price_thread = threading.Thread(
+            target=_poll_thread_main,
+            args=(broker, shared),
+            name="rest-price-poll",
+            daemon=True,
+        )
+    else:
+        price_thread = threading.Thread(
             target=_ws_thread_main,
             args=(shared,),
             name="ws-price-stream",
             daemon=True,
-        ),
+        )
+
+    threads = [
+        price_thread,
         threading.Thread(
             target=_analysis_thread_main,
             args=(broker, shared, cfg),

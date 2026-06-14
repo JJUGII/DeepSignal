@@ -355,7 +355,7 @@ const HELP = {
   },
   trade_period_filter: {
     title: '기간 필터',
-    text: '거래내역을 조회할 기간을 선택합니다.\n• 1주일: 최근 7일\n• 1개월: 최근 30일\n• 3개월: 최근 90일\n\n코인은 업비트 API에서, 국내주식·해외주식은 KIS Open API에서 실제 체결 이력을 불러옵니다.'
+    text: '거래내역을 조회할 기간을 선택합니다.\n• 1주일: 최근 7일\n• 1개월: 최근 30일\n• 3개월: 최근 90일\n\n코인은 활성 거래소(Upbit/Bithumb) API에서, 국내주식·해외주식은 KIS Open API에서 실제 체결 이력을 불러옵니다.'
   },
   trade_type_filter: {
     title: '거래 유형 필터',
@@ -685,7 +685,10 @@ function navigate(page) {
   syncBottomNav(page);
   if (page === 'dashboard') renderDashboard();
   if (page === 'runner')    renderRunner();
-  if (page === 'settings')  renderSettings();
+  if (page === 'settings') {
+    activeSettingsTab = 'upbit';
+    renderSettings();
+  }
   if (page === 'logs')      renderLogs();
   if (page === 'analysis')  renderAnalysis();
   if (page === 'trades')    renderTrades();
@@ -859,11 +862,106 @@ async function switchReturnsPeriod(period) {
 function exchBadge(name) {
   const map = {
     upbit:   '<span class="exchange-badge upbit">Upbit</span>',
+    bithumb: '<span class="exchange-badge bithumb">Bithumb</span>',
     binance: '<span class="exchange-badge binance">Binance</span>',
     kis:     '<span class="exchange-badge kis">KIS</span>',
     bybit:   '<span class="exchange-badge binance">Bybit</span>',
   };
   return map[(name || '').toLowerCase()] || '';
+}
+
+function cryptoExchangesFromStatus(d) {
+  if (d && d.crypto_exchanges) return d.crypto_exchanges;
+  return {
+    upbit: {
+      broker: 'upbit',
+      connected: true,
+      demo: false,
+      trading_supported: true,
+      holdings: d.holdings || [],
+      balance: {
+        available: Number(d.balance_krw || 0),
+        total: Number(d.balance_krw_total ?? d.balance_krw ?? 0),
+      },
+      error: null,
+    },
+    bithumb: {
+      broker: 'bithumb',
+      connected: false,
+      demo: true,
+      trading_supported: true,
+      holdings: [],
+      balance: { available: 0, total: 0 },
+      error: null,
+    },
+  };
+}
+
+function cryptoCashTotal(exchanges) {
+  return Object.values(exchanges || {}).reduce(
+    (sum, ex) => sum + Number(ex.balance?.total ?? ex.balance?.available ?? 0),
+    0
+  );
+}
+
+function buildCryptoAssetCard(ex, runner, activeBroker) {
+  const broker = (ex.broker || 'upbit').toLowerCase();
+  const isActive = (activeBroker || 'upbit').toLowerCase() === broker;
+  const holdings = ex.holdings || [];
+  const krwTotal = Number(ex.balance?.total ?? ex.balance?.available ?? 0);
+  const coinVal = holdings.reduce((s, h) => s + (h.valuation_krw || 0), 0);
+  const cryptoPnl = holdings.reduce((s, h) => s + (h.pnl_pct || 0), 0);
+  const runnerRows = isActive ? `
+    <div class="status-card-row">
+      <span class="sc-key">오늘 매수</span><span class="sc-val">${fmt_krw(runner.buy_krw_today || 0)}</span>
+    </div>
+    <div class="status-card-row">
+      <span class="sc-key">오늘 매도</span><span class="sc-val">${fmt_krw(runner.sell_krw_today || 0)}</span>
+    </div>
+    <div class="status-card-divider"></div>` : `
+    <div class="status-card-row">
+      <span class="sc-key">자동매매</span><span class="sc-val" style="color:var(--text-muted)">비활성 거래소</span>
+    </div>
+    <div class="status-card-divider"></div>`;
+  const statusNote = ex.demo
+    ? `<div class="status-card-row"><span class="sc-key" style="color:var(--text-muted)">상태</span><span class="sc-val" style="font-size:11px">API 키 미설정<br><span style="color:var(--text-muted)">설정 → 코인 (거래소) → ${broker === 'bithumb' ? 'bithumb' : 'upbit'}</span></span></div>`
+    : ex.error
+      ? `<div class="status-card-row"><span class="sc-key" style="color:var(--danger)">오류</span><span class="sc-val" style="font-size:11px">${escHtml(ex.error)}</span></div>`
+      : '';
+  return `
+    <div class="status-card info">
+      <div class="status-card-label">코인 자산 ${exchBadge(broker)}</div>
+      <div class="status-card-value">${fmt_krw(Math.round(coinVal + krwTotal))}</div>
+      <div class="status-card-row">
+        <span class="sc-key">KRW 잔고</span><span class="sc-val">${fmt_krw(krwTotal)}</span>
+      </div>
+      ${statusNote}
+      ${runnerRows}
+      <div class="status-card-row">
+        <span class="sc-key">보유 코인</span>
+        <span class="sc-val ${holdings.length > 0 ? 'text-up' : ''}">
+          ${holdings.length}개${holdings.length ? ` &nbsp;${gradPct(cryptoPnl / holdings.length)}` : ''}
+        </span>
+      </div>
+    </div>`;
+}
+
+function buildCryptoHoldingRows(holdings) {
+  return holdings.map(h => {
+    const symbol = (h.market || '').replace('KRW-', '');
+    const korName = coinKoreanName(h.market);
+    return `<tr>
+      <td>
+        <strong class="symbol-link" onclick="openSymbolDetail('${escHtml(h.market)}','${escHtml(korName || '')}')">${symbol}</strong>
+        ${korName ? `<br><span style="font-size:11px;color:var(--text-muted)">${korName}</span>` : ''}
+      </td>
+      <td>${h.quantity}</td>
+      <td>${fmt_krw(h.avg_buy_price)}</td>
+      <td>${fmt_krw(h.current_price)}</td>
+      <td>${fmt_krw(h.valuation_krw)}</td>
+      <td>${gradPct(h.pnl_pct)}</td>
+    </tr>`;
+  }).join('');
 }
 
 // ⑤ 그라디언트 수익률 텍스트
@@ -1133,7 +1231,7 @@ function buildDonutChart(segments, { size = 110, strokeW = 13 } = {}) {
   return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${arcs}</svg>`;
 }
 
-function buildPortfolioDonut(holdings, stockHoldings, krwTotal, stockBalance) {
+function buildPortfolioDonut(holdings, stockHoldings, cryptoCashByExchange, stockBalance) {
   const COLORS = ['#f4f4f6','#b6b6bd','#86868f','#5a5a60','#d4d4d8','#9a9aa1','#6e6e76','#42424a'];
   const segments = [];
   holdings.forEach((h, i) => {
@@ -1143,9 +1241,15 @@ function buildPortfolioDonut(holdings, stockHoldings, krwTotal, stockBalance) {
   const stockVal = stockHoldings.reduce((s, h) => s + (h.market_value || 0), 0);
   if (stockVal > 0)
     segments.push({ label: '국내주식', value: stockVal, color: '#86868f' });
-  const cash = (krwTotal || 0) + (stockBalance || 0);
-  if (cash > 0)
-    segments.push({ label: '현금', value: cash, color: 'rgba(148,163,184,.3)' });
+  const upbitCash = Number(cryptoCashByExchange?.upbit || 0);
+  const bithumbCash = Number(cryptoCashByExchange?.bithumb || 0);
+  if (upbitCash > 0)
+    segments.push({ label: 'Upbit 현금', value: upbitCash, color: 'rgba(148,163,184,.35)' });
+  if (bithumbCash > 0)
+    segments.push({ label: 'Bithumb 현금', value: bithumbCash, color: 'rgba(255,140,0,.25)' });
+  const stockCash = Number(stockBalance || 0);
+  if (stockCash > 0)
+    segments.push({ label: '주식 예수금', value: stockCash, color: 'rgba(148,163,184,.2)' });
   if (!segments.length) return '';
   const total = segments.reduce((s, x) => s + x.value, 0);
   if (!total) return '';
@@ -1567,10 +1671,14 @@ async function loadDashboard() {
   const failuresSection = buildOrderFailures(orderFailures);
 
   const r = d.runner || {};
-  const holdings      = d.holdings || [];
+  const cryptoEx = cryptoExchangesFromStatus(d);
+  const upbitEx = cryptoEx.upbit || {};
+  const bithumbEx = cryptoEx.bithumb || {};
+  const holdings = [...(upbitEx.holdings || []), ...(bithumbEx.holdings || [])];
   const stockHoldings = d.stock_holdings || [];
   const plan = d.last_plan || {};
   const thr  = d.thresholds || {};
+  const cryptoCash = cryptoCashTotal(cryptoEx);
   // 종목별 동적 TP/SL 맵 (symbol → tpsl)
   const kposTpslMap = {};
   for (const p of (kpos.positions || [])) {
@@ -1585,7 +1693,7 @@ async function loadDashboard() {
   // stock_balance_krw만 쓰면 매도 직후 T+2 대기금이 빠져 자산이 과소 표시됨
   const coinVal  = holdings.reduce((s, h) => s + (h.valuation_krw || 0), 0);
   const stockVal = stockHoldings.reduce((s, h) => s + (h.market_value || 0), 0);
-  const krwTotal = d.balance_krw_total ?? d.balance_krw ?? 0;
+  const krwTotal = cryptoCash;
   const kisTotal = d.stock_total_equity > 0
     ? d.stock_total_equity
     : stockVal + (d.stock_balance_krw || 0);
@@ -1651,27 +1759,16 @@ async function loadDashboard() {
     </div>` : '';
 
   // ① 포트폴리오 도넛
-  const donutSection = buildPortfolioDonut(holdings, stockHoldings, krwTotal, d.stock_balance_krw || 0);
-
-  // ③ AI 신호 패널
-  const signalPanel = buildSignalPanel(scores, plan);
+  const donutSection = buildPortfolioDonut(holdings, stockHoldings, {
+    upbit: Number(upbitEx.balance?.total ?? upbitEx.balance?.available ?? 0),
+    bithumb: Number(bithumbEx.balance?.total ?? bithumbEx.balance?.available ?? 0),
+  }, d.stock_balance_krw || 0);
 
   // ⑤ 수익률 그라디언트 — 코인/주식 행
-  const cryptoRows = holdings.map(h => {
-    const symbol  = (h.market || '').replace('KRW-', '');
-    const korName = coinKoreanName(h.market);
-    return `<tr>
-    <td>
-      <strong class="symbol-link" onclick="openSymbolDetail('${escHtml(h.market)}','${escHtml(korName||'')}')">${symbol}</strong>
-      ${korName ? `<br><span style="font-size:11px;color:var(--text-muted)">${korName}</span>` : ''}
-    </td>
-    <td>${h.quantity}</td>
-    <td>${fmt_krw(h.avg_buy_price)}</td>
-    <td>${fmt_krw(h.current_price)}</td>
-    <td>${fmt_krw(h.valuation_krw)}</td>
-    <td>${gradPct(h.pnl_pct)}</td>
-  </tr>`;
-  }).join('');
+  const cryptoCols = ['종목', '수량', '평단', '현재가', '평가금', '수익률'];
+  const upbitRows = buildCryptoHoldingRows(upbitEx.holdings || []);
+  const bithumbRows = buildCryptoHoldingRows(bithumbEx.holdings || []);
+  const signalPanel = buildSignalPanel(scores, plan);
 
   const stockRows = stockHoldings.map(h => {
     const tpsl = kposTpslMap[h.symbol];
@@ -1748,27 +1845,8 @@ async function loadDashboard() {
             </div>
           </div>
 
-          <!-- 코인 자산 (보유현황 통합) -->
-          <div class="status-card info">
-            <div class="status-card-label">코인 자산 ${exchBadge('upbit')}</div>
-            <div class="status-card-value">${fmt_krw(Math.round(coinVal + krwTotal))}</div>
-            <div class="status-card-row">
-              <span class="sc-key">KRW 잔고</span><span class="sc-val">${fmt_krw(krwTotal)}</span>
-            </div>
-            <div class="status-card-row">
-              <span class="sc-key">오늘 매수</span><span class="sc-val">${fmt_krw(r.buy_krw_today || 0)}</span>
-            </div>
-            <div class="status-card-row">
-              <span class="sc-key">오늘 매도</span><span class="sc-val">${fmt_krw(r.sell_krw_today || 0)}</span>
-            </div>
-            <div class="status-card-divider"></div>
-            <div class="status-card-row">
-              <span class="sc-key">보유 코인</span>
-              <span class="sc-val ${holdings.length > 0 ? 'text-up' : ''}">
-                ${holdings.length}개${holdings.length ? ` &nbsp;${gradPct(cryptoPnl / holdings.length)}` : ''}
-              </span>
-            </div>
-          </div>
+          ${buildCryptoAssetCard(upbitEx, r, d.crypto_broker)}
+          ${buildCryptoAssetCard(bithumbEx, r, d.crypto_broker)}
 
           <!-- 주식 자산 (보유현황 통합) -->
           <div class="status-card info">
@@ -1824,7 +1902,11 @@ async function loadDashboard() {
         <div class="dash-grid">
           <div class="section-box">
             <div class="section-title">코인 포지션 ${exchBadge('upbit')}${helpBtn('holding_pnl')}</div>
-            ${holdingTable(cryptoRows, ['종목', '수량', '평균단가', '현재가', '평가금액', `수익률${helpBtn('holding_pnl')}`])}
+            ${holdingTable(upbitRows, ['종목', '수량', '평균단가', '현재가', '평가금액', `수익률${helpBtn('holding_pnl')}`])}
+          </div>
+          <div class="section-box">
+            <div class="section-title">코인 포지션 ${exchBadge('bithumb')}${helpBtn('holding_pnl')}</div>
+            ${holdingTable(bithumbRows, ['종목', '수량', '평균단가', '현재가', '평가금액', `수익률${helpBtn('holding_pnl')}`])}
           </div>
           <div class="section-box">
             <div class="section-title">국내주식 포지션 ${exchBadge('kis')}${helpBtn('holding_pnl')}</div>
@@ -2281,7 +2363,7 @@ function renderSettingsPage(data) {
     el.innerHTML = `
       <div class="page-header">
         <h1 class="page-title">환경설정</h1>
-        <div class="page-subtitle">.env 파일 설정 — 저장 시 자동 적용</div>
+        <div class="page-subtitle">「코인 (거래소)」 탭에서 거래소를 선택하면 해당 API 키·Dry Run 설정이 표시됩니다. 저장 후 START.bat 재시작.</div>
       </div>
       <div class="section-box">
         <div class="tabs">${tabsHtml}</div>
@@ -2301,11 +2383,82 @@ function renderSettingsPage(data) {
   }
 }
 
-const _PRIVATE_GROUPS = ["Upbit API", "KIS API", "Telegram", "알림 서비스"];
+const _PRIVATE_GROUPS = ["KIS API", "Telegram", "알림 서비스"];
 
 function renderSettingsSection(items, sectionKey) {
   if (sectionKey === 'private') return renderPrivateSection(items);
+  if (sectionKey === 'upbit') return renderCryptoExchangeSection(items);
   return renderItemList(items);
+}
+
+function _selectedCryptoBroker() {
+  const sel = document.querySelector('[data-key="CRYPTO_BROKER"]');
+  if (sel && sel.value) return String(sel.value).toLowerCase();
+  const item = (settingsData?.sections?.upbit || []).find(i => i.key === 'CRYPTO_BROKER');
+  return String(item?.value || 'upbit').toLowerCase();
+}
+
+function renderCryptoExchangeSection(items) {
+  const broker = _selectedCryptoBroker();
+  const common = items.filter(i => i.exchange === 'common' || !i.exchange);
+  const brokerItems = items.filter(i => i.exchange === broker);
+  const runnerOnly = items.filter(i => i.exchange === 'upbit' && broker === 'bithumb');
+
+  const brokerLabel = broker === 'bithumb' ? 'Bithumb' : 'Upbit';
+  const brokerBadge = broker === 'bithumb'
+    ? '<span class="exchange-badge bithumb">Bithumb</span>'
+    : '<span class="exchange-badge upbit">Upbit</span>';
+
+  const brokerSelect = common.filter(i => i.key === 'CRYPTO_BROKER');
+  const commonRest = common.filter(i => i.key !== 'CRYPTO_BROKER');
+
+  const onBrokerChange = `onchange="onCryptoBrokerChange(this.value)"`;
+
+  const brokerSelectHtml = brokerSelect.map(item => {
+    const tip = helpIcon(item.desc);
+    const opts = (item.options || []).map(o =>
+      `<option value="${o}" ${o === item.value ? 'selected' : ''}>${o}</option>`
+    ).join('');
+    return `<div class="form-row">
+      <label class="form-label">${item.label} ${tip}</label>
+      <select class="form-input form-select" data-key="${item.key}" ${onBrokerChange}>${opts}</select>
+    </div>`;
+  }).join('');
+
+  const runnerNote = broker === 'bithumb' ? `
+    <div class="exchange-runner-note">
+      빗썸 러너는 REST 시세 폴링(약 2초) + 텔레그램 승인 매매를 지원합니다. Upbit는 WebSocket 실시간 TP/SL이 더 빠릅니다.
+    </div>` : '';
+
+  return `
+    ${brokerSelectHtml}
+    <div class="exchange-settings-panel" id="exchange-settings-panel">
+      <div class="exchange-settings-header">
+        ${brokerBadge}
+        <span class="exchange-settings-title">${brokerLabel} 연결 설정</span>
+      </div>
+      ${renderItemList(brokerItems)}
+    </div>
+    <hr class="divider" style="margin:20px 0">
+    <div class="settings-group-title">공통 (모든 거래소)</div>
+    ${renderItemList(commonRest)}
+    ${runnerNote}
+    ${broker === 'bithumb' && runnerOnly.length ? `
+      <details class="exchange-runner-details">
+        <summary>Upbit 러너 전용 설정 (참고)</summary>
+        ${renderItemList(runnerOnly)}
+      </details>` : ''}
+  `;
+}
+
+function onCryptoBrokerChange(value) {
+  const panel = document.getElementById('settings-tab-upbit');
+  if (!panel || !settingsData) return;
+  const items = settingsData.sections.upbit || [];
+  // CRYPTO_BROKER 값을 메모리에 반영 (재렌더 시 select 유지)
+  const brokerItem = items.find(i => i.key === 'CRYPTO_BROKER');
+  if (brokerItem) brokerItem.value = value;
+  panel.innerHTML = renderCryptoExchangeSection(items);
 }
 
 function renderPrivateSection(items) {
@@ -2705,6 +2858,7 @@ async function loadAnalysis() {
         <td style="white-space:nowrap">${fmt_ts(t.executed_at)}</td>
         <td>
           <strong style="font-size:12px">${escHtml(t.symbol||'-')}</strong>
+          ${tab==='crypto'&&t.broker?`<br><span class="exchange-badge ${t.broker==='bithumb'?'bithumb':'upbit'}" style="font-size:9px;padding:1px 4px">${t.broker==='bithumb'?'Bithumb':'Upbit'}</span>`:''}
           ${(() => { let nm = ''; if (t.tab === 'crypto') { nm = coinKoreanName('KRW-' + (t.symbol||'')); } else if (t.name && t.name !== t.symbol) { nm = t.name; } return nm ? `<br><span style="font-size:10px;color:var(--text-muted)">${escHtml(nm)}</span>` : ''; })()}
         </td>
         <td style="text-align:center">${sideBadge}</td>
@@ -5089,9 +5243,13 @@ async function loadReport(name) {
 // 공통
 // ══════════════════════════════════════════════
 function updateSidebarAccount(d, approval) {
-  const holdings      = d.holdings || [];
+  const cryptoEx = cryptoExchangesFromStatus(d);
+  const holdings = [
+    ...(cryptoEx.upbit?.holdings || []),
+    ...(cryptoEx.bithumb?.holdings || []),
+  ];
   const stockHoldings = d.stock_holdings || [];
-  const krwTotal      = d.balance_krw_total ?? d.balance_krw ?? 0;
+  const krwTotal = cryptoCashTotal(cryptoEx);
   const coinVal  = holdings.reduce((s, h) => s + (h.valuation_krw || 0), 0);
   const stockVal = stockHoldings.reduce((s, h) => s + (h.market_value || 0), 0);
   const kisTotal = d.stock_total_equity > 0
@@ -5106,7 +5264,7 @@ function updateSidebarAccount(d, approval) {
   if (widget && elVal) {
     widget.style.display = '';
     elVal.textContent = fmt_krw(Math.round(totalAsset));
-    if (elSub) elSub.textContent = `코인 ${holdings.length}개 · 주식 ${stockHoldings.length}종목`;
+    if (elSub) elSub.textContent = `Upbit ${(cryptoEx.upbit?.holdings || []).length} · Bithumb ${(cryptoEx.bithumb?.holdings || []).length} · 주식 ${stockHoldings.length}종목`;
   }
 
   // ── 신버전 상단 Nav 자산 표시 ──

@@ -19,13 +19,13 @@ def crypto_paper_mode_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
-def effective_dry_run(*, requested_dry_run: bool | None = None) -> bool:
-    """Paper mode always forces dry_run. Otherwise honor requested or UPBIT_DRY_RUN."""
+def effective_dry_run(*, requested_dry_run: bool | None = None, env_key: str = "UPBIT_DRY_RUN") -> bool:
+    """Paper mode always forces dry_run. Otherwise honor requested or env_key (default UPBIT_DRY_RUN)."""
     if crypto_paper_mode_enabled():
         return True
     if requested_dry_run is not None:
         return bool(requested_dry_run)
-    flag = (os.environ.get("UPBIT_DRY_RUN") or "true").strip().lower()
+    flag = (os.environ.get(env_key) or "true").strip().lower()
     return flag not in ("0", "false", "no", "off")
 
 

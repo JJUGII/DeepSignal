@@ -22,7 +22,9 @@ from deepsignal.crypto_trading.crypto_telegram_flow import (
     load_crypto_telegram_config_from_env,
     poll_crypto_telegram_until_done,
 )
-from deepsignal.crypto_trading.upbit_broker import UpbitBroker
+from typing import Any
+
+from deepsignal.crypto_trading.upbit_broker import UpbitBroker  # type: ignore[attr-defined]
 from deepsignal.live_trading.inactive_auto_execute import (
     execute_crypto_plan_inactive_auto,
     try_execute_pending_crypto_in_inactive_window,
@@ -199,7 +201,7 @@ def can_place_order_today(state: dict[str, Any], *, max_orders_per_day: int) -> 
 
 
 def run_crypto_auto_tick(
-    broker: UpbitBroker,
+    broker: Any,
     cfg: CryptoAutoRunnerConfig,
 ) -> dict[str, Any]:
     state = load_runner_state(cfg.output_dir)
@@ -240,7 +242,7 @@ def run_crypto_auto_tick(
 
 
 def _run_crypto_auto_tick_body(
-    broker: UpbitBroker,
+    broker: Any,
     cfg: CryptoAutoRunnerConfig,
     state: dict[str, Any],
     result: dict[str, Any],
@@ -469,7 +471,7 @@ def _run_crypto_auto_tick_body(
             result["diagnostics"]["cooldown_excluded_markets"] = list(excluded)
         return result
 
-    plan = build_plan_from_recommendation(rec)
+    plan = build_plan_from_recommendation(rec, broker=getattr(broker, "exchange_id", "upbit"))
     if rec.side == "buy":
         from deepsignal.crypto_trading.crypto_execution_quality import (
             evaluate_pre_trade,

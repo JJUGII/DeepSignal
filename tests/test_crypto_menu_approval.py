@@ -47,15 +47,23 @@ def test_handle_menu_crypto_sends_approval_when_rec_exists(
     approvals: list = []
 
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.build_daily_crypto_recommendation",
+        "deepsignal.crypto_trading.telegram.menu.prepare_menu_scan_lock",
+        lambda *a, **k: "acquired",
+    )
+    monkeypatch.setattr(
+        "deepsignal.crypto_trading.telegram.menu.release_menu_scan_lock",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "deepsignal.crypto_trading.telegram.menu.build_daily_crypto_recommendation",
         lambda *a, **k: rec,
     )
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.build_plan_from_recommendation",
-        lambda r: plan,
+        "deepsignal.crypto_trading.telegram.menu.build_plan_from_recommendation",
+        lambda r, **k: plan,
     )
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.save_crypto_plan",
+        "deepsignal.crypto_trading.telegram.menu.save_crypto_plan",
         lambda out, p: (tmp_path / "CRYPTO_ORDER_PLAN.json", tmp_path / "plan.md"),
     )
     monkeypatch.setattr(
@@ -103,11 +111,11 @@ def test_handle_menu_crypto_sends_approval_when_rec_exists(
 
 def test_menu_crypto_command_uses_handler(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.handle_menu_crypto_recommend",
+        "deepsignal.crypto_trading.telegram.menu.handle_menu_crypto_recommend",
         lambda *a, **k: {"body": "[ok]", "approval_sent": True, "has_recommendation": True},
     )
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu._send_menu_text",
+        "deepsignal.crypto_trading.telegram.menu._send_menu_text",
         lambda cfg, text, keyboard=None: {"ok": True},
     )
     upd = {"message": {"text": MENU_TEXT_RECOMMEND_CRYPTO, "chat": {"id": "12345"}}}

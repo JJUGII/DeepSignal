@@ -25,12 +25,11 @@ if not exist "outputs" mkdir outputs
 netstat -ano | findstr ":%PORT% " | findstr "LISTENING" >nul 2>&1
 if %ERRORLEVEL%==0 (
   echo.
-  echo DeepSignal Web UI가 이미 실행 중입니다.
-  echo %URL%
-  echo.
-  start "" "%URL%"
-  pause
-  exit /b 0
+  echo 기존 Web UI를 종료하고 새로 시작합니다...
+  for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":%PORT% " ^| findstr "LISTENING"') do (
+    taskkill /PID %%P /F >nul 2>&1
+  )
+  timeout /t 1 /nobreak >nul
 )
 
 echo.
@@ -40,8 +39,6 @@ echo   %URL%
 echo   종료: 이 창에서 Ctrl+C
 echo ========================================
 echo.
-
-start /b cmd /c "timeout /t 2 /nobreak >nul && start "" "%URL%""
 
 "%PY%" main.py web-ui --port %PORT%
 set "EC=%ERRORLEVEL%"

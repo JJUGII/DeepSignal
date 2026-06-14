@@ -142,51 +142,118 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _make_broker():
-    """환경변수 로드 후 UpbitBroker 생성."""
-    from dotenv import load_dotenv
-    load_dotenv(str(_ENV_PATH), override=False)
-    from deepsignal.crypto_trading.upbit_config import load_upbit_config_from_env
-    from deepsignal.crypto_trading.upbit_broker import UpbitBroker
-    cfg = load_upbit_config_from_env()
-    return UpbitBroker(cfg)
+def _ensure_crypto_env() -> None:
+    """CLI와 동일하게 프로젝트·홈 .env 로드 (Web UI 잔고 조회용)."""
+    from deepsignal.crypto_trading.crypto_env import ensure_crypto_runtime_env
+
+    ensure_crypto_runtime_env(project_dir=_PROJECT_ROOT)
+
+
+def _crypto_broker_id() -> str:
+    from deepsignal.crypto_trading.broker.selection import normalize_crypto_broker_name
+
+    _ensure_crypto_env()
+    return normalize_crypto_broker_name()
+
+
+def _make_broker(broker_name: str | None = None):
+    """환경변수 로드 후 코인 브로커 생성."""
+    from deepsignal.crypto_trading.broker.factory import load_crypto_broker
+
+    _ensure_crypto_env()
+    name = broker_name or _crypto_broker_id()
+    # Web UI 잔고 표시: private API는 항상 조회 (CRYPTO_PAPER_MODE는 주문만 차단)
+    return load_crypto_broker(name, dry_run=False)
+
+
+def _broker_has_trading(broker: Any) -> bool:
+    return callable(getattr(broker, "get_open_orders", None)) and callable(
+        getattr(broker, "cancel_order", None)
+    )
+
+
+def _serialize_crypto_holdings(holdings: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "market": h.market,
+            "quantity": round(float(h.total_quantity), 6),
+            "avg_buy_price": round(float(h.avg_buy_price or 0), 2),
+            "current_price": round(float(h.current_price or 0), 2),
+            "pnl_pct": round(float(h.pnl_pct or 0), 2),
+            "valuation_krw": round(float(h.valuation_krw or 0), 0),
+        }
+        for h in holdings
+    ]
+
+
+def _balance_from_broker(broker: Any) -> dict[str, float]:
+    for b in broker.get_balances():
+        if b.currency.upper() == "KRW":
+            available = float(b.balance or 0)
+            locked = float(b.locked or 0)
+            return {"available": available, "total": available + locked}
+    return {"available": 0.0, "total": 0.0}
+
+
+def _get_crypto_exchange_snapshot(broker_name: str) -> dict[str, Any]:
+    """Upbit/Bithumb 각각 잔고·보유 스냅샷 (Web UI 동시 표시용)."""
+    from deepsignal.crypto_trading.broker.selection import crypto_broker_label
+
+    name = str(broker_name or "").strip().lower()
+    try:
+        broker = _make_broker(name)
+        cfg = broker.config
+        if getattr(cfg, "is_demo", False):
+            return {
+                "broker": name,
+                "label": crypto_broker_label(name),
+                "connected": False,
+                "demo": True,
+                "trading_supported": True,
+                "holdings": [],
+                "balance": {"available": 0.0, "total": 0.0},
+                "error": f"API 키 미설정 — 설정 → 코인 (거래소) → {name}",
+            }
+        holdings = _serialize_crypto_holdings(broker.get_crypto_holdings())
+        balance = _balance_from_broker(broker)
+        return {
+            "broker": name,
+            "label": crypto_broker_label(name),
+            "connected": True,
+            "demo": False,
+            "trading_supported": True,
+            "holdings": holdings,
+            "balance": balance,
+            "error": None,
+        }
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("%s snapshot failed: %s", name, e)
+        return {
+            "broker": name,
+            "label": crypto_broker_label(name),
+            "connected": False,
+            "demo": False,
+            "trading_supported": True,
+            "holdings": [],
+            "balance": {"available": 0.0, "total": 0.0},
+            "error": str(e)[:200],
+        }
 
 
 def _get_holdings() -> list[dict[str, Any]]:
-    """Upbit 보유 코인 조회."""
-    try:
-        broker = _make_broker()
-        holdings = broker.get_crypto_holdings()
-        return [
-            {
-                "market": h.market,
-                "quantity": round(float(h.total_quantity), 6),
-                "avg_buy_price": round(float(h.avg_buy_price or 0), 2),
-                "current_price": round(float(h.current_price or 0), 2),
-                "pnl_pct": round(float(h.pnl_pct or 0), 2),
-                "valuation_krw": round(float(h.valuation_krw or 0), 0),
-            }
-            for h in holdings
-        ]
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("holdings fetch failed: %s", e)
-        return []
+    """활성 CRYPTO_BROKER 보유 (하위 호환)."""
+    snap = _get_crypto_exchange_snapshot(_crypto_broker_id())
+    return list(snap.get("holdings") or [])
 
 
 def _get_balance() -> dict[str, float]:
-    try:
-        broker = _make_broker()
-        for b in broker.get_balances():
-            if b.currency.upper() == "KRW":
-                available = float(b.balance or 0)
-                locked    = float(b.locked or 0)
-                return {"available": available, "total": available + locked}
-        return {"available": 0.0, "total": 0.0}
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("balance fetch failed: %s", e)
-        return {"available": 0.0, "total": 0.0}
+    snap = _get_crypto_exchange_snapshot(_crypto_broker_id())
+    bal = snap.get("balance") or {}
+    return {
+        "available": float(bal.get("available", 0) or 0),
+        "total": float(bal.get("total", 0) or 0),
+    }
 
 
 def _make_kis_broker(safe_mode: bool = True):
@@ -545,10 +612,15 @@ def _handle_crypto_approval_action(action: str, token: str) -> tuple[bool, str]:
             "action": "rejected", "market": approval.market, "source": "web_ui",
         })
         coin = approval.market.split("-")[-1] if "-" in approval.market else approval.market
-        _bg_notify(f"🚫 매수 거부  ·  Upbit\n*{approval.market}*")
+        from deepsignal.crypto_trading.broker.selection import crypto_broker_label
+        _bl = crypto_broker_label(_crypto_broker_id())
+        _bg_notify(f"🚫 매수 거부  ·  {_bl}\n*{approval.market}*")
         return True, f"{approval.market} 주문 거부됨"
 
     if action == "approve":
+        from deepsignal.crypto_trading.broker.selection import crypto_broker_label
+        broker_id = _crypto_broker_id()
+        broker_label = crypto_broker_label(broker_id)
         # ── 사전 호가창 품질 체크 (승인 전 매수벽/스프레드 검사) ──
         try:
             from deepsignal.crypto_trading.execution.engine import check_orderbook_quality
@@ -583,7 +655,8 @@ def _handle_crypto_approval_action(action: str, token: str) -> tuple[bool, str]:
                 plan_path = _OUTPUT_DIR / "CRYPTO_ORDER_PLAN.json"
             plan = load_crypto_plan(plan_path)
             result = execute_approved_crypto_order(broker, plan, execute=True, output_dir=_OUTPUT_DIR)
-            return True, f"{approval.market} 주문 실행 완료"
+            _bg_notify(f"✅ 매수 체결  ·  {broker_label}\n*{approval.market}*")
+            return True, f"{approval.market} 주문 실행 완료 ({broker_label})"
         except Exception as e:
             logging.getLogger(__name__).error("crypto web approval execution failed: %s", e)
             err_str = str(e)
@@ -929,21 +1002,33 @@ async def api_status() -> JSONResponse:
     runner = get_runner_status(_OUTPUT_DIR)
     # 코인(Upbit) + 주식(KIS) 동시 조회
     # KIS는 _get_all_stock_data()로 단일 API 호출 → rate-limit 방지
-    (holdings, balance), all_stock = await asyncio.gather(
+    (upbit_snap, bithumb_snap), all_stock = await asyncio.gather(
         asyncio.gather(
-            asyncio.to_thread(_get_holdings),
-            asyncio.to_thread(_get_balance),
+            asyncio.to_thread(_get_crypto_exchange_snapshot, "upbit"),
+            asyncio.to_thread(_get_crypto_exchange_snapshot, "bithumb"),
         ),
         asyncio.to_thread(_get_all_stock_data),
     )
+    crypto_exchanges = {"upbit": upbit_snap, "bithumb": bithumb_snap}
     stock_holdings, stock_balance = all_stock
     last_plan = _get_last_plan()
     thresholds = _read_json(_OUTPUT_DIR / "CRYPTO_ACTIVE_THRESHOLDS.json")
 
+    from deepsignal.crypto_trading.broker.selection import crypto_broker_label
+
+    broker_id = _crypto_broker_id()
+    active_snap = crypto_exchanges.get(broker_id) or upbit_snap
+    holdings = list(active_snap.get("holdings") or [])
+    balance = active_snap.get("balance") or {"available": 0.0, "total": 0.0}
+
     return JSONResponse({
         "runner": runner,
-        "balance_krw": balance.get("available", 0) if isinstance(balance, dict) else balance,
-        "balance_krw_total": balance.get("total", 0) if isinstance(balance, dict) else balance,
+        "crypto_exchanges": crypto_exchanges,
+        "crypto_broker": broker_id,
+        "crypto_broker_label": crypto_broker_label(broker_id),
+        "crypto_trading_supported": True,
+        "balance_krw": balance.get("available", 0),
+        "balance_krw_total": balance.get("total", 0),
         "holdings": holdings,
         "stock_holdings": stock_holdings,
         "stock_balance_krw": stock_balance.get("balance", 0) if isinstance(stock_balance, dict) else stock_balance,
@@ -1087,36 +1172,46 @@ _coin_names_fetched_at: float = 0.0
 
 @app.get("/api/coin-names")
 async def api_coin_names() -> JSONResponse:
-    """업비트 KRW 마켓 한글명 매핑 (캐시 1시간).
+    """KRW 마켓 한글명 매핑 (선택 브로커, 캐시 1시간).
 
     Returns:
         {market: {korean_name, english_name}} 예: {"KRW-BTC": {"korean_name": "비트코인", "english_name": "Bitcoin"}}
     """
     import time as _time
     global _coin_names_cache, _coin_names_fetched_at
-    if _coin_names_cache and (_time.time() - _coin_names_fetched_at) < 3600:
+    broker_id = _crypto_broker_id()
+    cache_key = f"__coin_names__{broker_id}"
+    cached = _chart_cache.get(cache_key)
+    if cached and (_time.monotonic() - cached["ts"]) < 3600:
+        return JSONResponse(cached["data"])
+    if _coin_names_cache and broker_id == "upbit" and (_time.time() - _coin_names_fetched_at) < 3600:
         return JSONResponse(_coin_names_cache)
     try:
-        import requests as _req
-        resp = _req.get(
-            "https://api.upbit.com/v1/market/all?isDetails=false",
-            timeout=5,
-        )
-        data = resp.json()
+        broker = _make_broker()
+        if broker.exchange_id == "bithumb":
+            data = broker.get_market_all()
+        else:
+            data = broker._request("GET", "/market/all", params={"isDetails": "false"})
         result: dict[str, dict] = {}
         for m in data:
+            if not isinstance(m, dict):
+                continue
             mkt = str(m.get("market", ""))
             if mkt.startswith("KRW-"):
                 result[mkt] = {
-                    "korean_name":  m.get("korean_name",  ""),
+                    "korean_name": m.get("korean_name", ""),
                     "english_name": m.get("english_name", ""),
                 }
-        _coin_names_cache = result
-        _coin_names_fetched_at = _time.time()
+        _chart_cache[cache_key] = {"data": result, "ts": _time.monotonic()}
+        if broker_id == "upbit":
+            _coin_names_cache = result
+            _coin_names_fetched_at = _time.time()
         return JSONResponse(result)
     except Exception as _e:
         import logging
         logging.getLogger(__name__).warning("coin names fetch failed: %s", _e)
+        if cached:
+            return JSONResponse(cached["data"])
         return JSONResponse(_coin_names_cache or {})
 
 
@@ -1259,6 +1354,7 @@ async def api_trade_history(limit: int = 30) -> JSONResponse:
             "approval_status": status,
             "reason": reason,
             "type": "crypto",
+            "broker": str(plan.get("broker") or _crypto_broker_id()).lower(),
         })
 
     trades.reverse()  # 최신 순
@@ -1267,9 +1363,11 @@ async def api_trade_history(limit: int = 30) -> JSONResponse:
 
 # ── 미체결 주문 조회·취소 ──────────────────────────────
 def _get_open_orders_crypto() -> list[dict]:
-    """Upbit 미체결 지정가 주문 (state=wait)."""
+    """선택 브로커 미체결 지정가 주문."""
     try:
         broker = _make_broker()
+        if not _broker_has_trading(broker):
+            return []
         rows = broker.get_open_orders()
         out = []
         for r in rows:
@@ -1278,7 +1376,7 @@ def _get_open_orders_crypto() -> list[dict]:
                 rem = float(r.get("remaining_volume") or 0)
                 price = float(r.get("price") or 0)
                 out.append({
-                    "uuid": r.get("uuid"),
+                    "uuid": r.get("uuid") or r.get("order_id"),
                     "market": r.get("market"),
                     "side": "매수" if str(r.get("side")) == "bid" else "매도",
                     "side_raw": r.get("side"),
@@ -1437,13 +1535,18 @@ def _get_candles_crypto(market: str, count: int) -> list[dict]:
 
 
 def _get_minute_candles_crypto(market: str, unit: int, count: int) -> list[dict]:
-    """Upbit 분봉 OHLC (오늘/1주 인트라데이용). time=UTC 초(정수)."""
+    """분봉 OHLC (오늘/1주 인트라데이용). time=UTC 초(정수)."""
     from datetime import datetime, timezone
     try:
         broker = _make_broker()
         m = market.strip().upper()
         n = max(2, min(int(count), 200))
-        rows = broker._request("GET", f"/candles/minutes/{int(unit)}", params={"market": m, "count": n})
+        if hasattr(broker, "get_minute_candles"):
+            rows = broker.get_minute_candles(m, int(unit), n)
+        elif broker.exchange_id == "upbit":
+            rows = broker._request("GET", f"/candles/minutes/{int(unit)}", params={"market": m, "count": n})
+        else:
+            return []
         if not isinstance(rows, list):
             return []
         result = []
@@ -1472,9 +1575,11 @@ def _get_minute_candles_crypto(market: str, unit: int, count: int) -> list[dict]
 
 
 def _get_orderbook_crypto(market: str, levels: int) -> dict:
-    """Upbit 호가창 (매수/매도벽 깊이)."""
+    """호가창 (매수/매도벽 깊이)."""
     try:
         broker = _make_broker()
+        if not hasattr(broker, "get_orderbook"):
+            return {"market": market, "bids": [], "asks": [], "error": "orderbook not supported"}
         ob = broker.get_orderbook(market, levels=levels)
         units = ob.get("orderbook_units") or []
         bids, asks = [], []
@@ -1510,22 +1615,50 @@ async def api_candles(market: str, count: int = 30) -> JSONResponse:
 
 
 def _get_all_markets() -> list[dict[str, Any]]:
-    """Upbit KRW 전체 마켓 + 24h 현재가·등락률. 1분 캐시."""
-    cache = _chart_cache.get("__all_markets__")
+    """KRW 전체 마켓 + 24h 현재가·등락률. 1분 캐시."""
+    cache = _chart_cache.get(f"__all_markets__{_crypto_broker_id()}")
     if cache and (_time.monotonic() - cache["ts"]) < 60:
         return cache["data"]
     try:
         broker = _make_broker()
-        # 전체 KRW 마켓 목록
-        mkts_raw = broker._request("GET", "/market/all", params={"isDetails": "false"})
-        krw_codes = [m["market"] for m in mkts_raw if isinstance(m, dict) and str(m.get("market","")).startswith("KRW-")]
-        # 24h 시세 (한 번에 최대 100개씩)
-        tickers: list[dict] = []
-        for i in range(0, len(krw_codes), 100):
-            batch = ",".join(krw_codes[i:i+100])
-            tickers += broker._request("GET", "/ticker", params={"markets": batch}) or []
-        # 한글 이름 매핑
-        name_map = {m["market"]: m.get("korean_name", "") for m in mkts_raw if isinstance(m, dict)}
+        if broker.exchange_id == "bithumb":
+            mkts_raw = broker.get_market_all()
+            krw_codes = [
+                m["market"] for m in mkts_raw
+                if isinstance(m, dict) and str(m.get("market", "")).startswith("KRW-")
+            ]
+            name_map = {
+                m["market"]: m.get("korean_name", "")
+                for m in mkts_raw if isinstance(m, dict)
+            }
+            tickers: list[dict] = []
+            for i in range(0, len(krw_codes), 100):
+                batch = krw_codes[i:i + 100]
+                ticker_map = broker.get_tickers(batch)
+                for mkt in batch:
+                    t = ticker_map.get(mkt)
+                    if t is None:
+                        continue
+                    tickers.append({
+                        "market": mkt,
+                        "trade_price": t.trade_price,
+                        "signed_change_rate": t.signed_change_rate,
+                        "acc_trade_price_24h": t.acc_trade_price_24h,
+                    })
+        else:
+            mkts_raw = broker._request("GET", "/market/all", params={"isDetails": "false"})
+            krw_codes = [
+                m["market"] for m in mkts_raw
+                if isinstance(m, dict) and str(m.get("market", "")).startswith("KRW-")
+            ]
+            tickers = []
+            for i in range(0, len(krw_codes), 100):
+                batch = ",".join(krw_codes[i:i + 100])
+                tickers += broker._request("GET", "/ticker", params={"markets": batch}) or []
+            name_map = {
+                m["market"]: m.get("korean_name", "")
+                for m in mkts_raw if isinstance(m, dict)
+            }
         result = []
         for t in tickers:
             mkt = t.get("market", "")
@@ -1539,9 +1672,9 @@ def _get_all_markets() -> list[dict[str, Any]]:
                 "change_pct": round(chg, 2),
                 "volume_krw": float(t.get("acc_trade_price_24h", 0) or 0),
             })
-        # 거래대금 기준 정렬
         result.sort(key=lambda x: -x["volume_krw"])
-        _chart_cache["__all_markets__"] = {"data": result, "ts": _time.monotonic()}
+        cache_key = f"__all_markets__{_crypto_broker_id()}"
+        _chart_cache[cache_key] = {"data": result, "ts": _time.monotonic()}
         return result
     except Exception as e:
         import logging
@@ -1828,9 +1961,11 @@ async def api_cancel_order(req: CancelOrderRequest) -> JSONResponse:
             if not req.uuid:
                 return JSONResponse({"ok": False, "message": "uuid 필요"}, status_code=400)
             broker = _make_broker()
+            from deepsignal.crypto_trading.broker.selection import crypto_broker_label
+            bl = crypto_broker_label(broker.exchange_id)
             result = await asyncio.to_thread(broker.cancel_order, req.uuid)
             _event_bus.publish_sync("crypto_approval_update", {"action": "order_cancelled", "uuid": req.uuid})
-            _bg_notify(f"⚪ 주문 취소  ·  Upbit\n주문번호 {req.uuid[:8]}…")
+            _bg_notify(f"⚪ 주문 취소  ·  {bl}\n주문번호 {req.uuid[:8]}…")
             return JSONResponse({"ok": True, "message": "주문 취소됨", "result": result})
 
         # ── 국내주식 (KIS) ────────────────────────────
@@ -1934,128 +2069,51 @@ def _fetch_crypto_trades(
     type_filter: str = "all",
     symbol: str = "",
 ) -> list[dict]:
-    """Upbit 체결 완료 주문 조회 (API 우선, 로컬 파일 폴백)."""
+    """체결 완료 주문 조회 (활성 브로커 API 우선, 로컬 audit 폴백)."""
     import glob as _glob
-    from datetime import datetime, timezone
 
+    from deepsignal.crypto_trading.crypto_trade_history import (
+        fetch_done_orders_from_broker,
+        trades_from_local_audits,
+    )
+
+    broker_id = _crypto_broker_id()
     items: list[dict] = []
 
-    # ── 1차: Upbit REST API /v1/orders (state=done) ────────────────
     try:
         broker = _make_broker()
-        # 업비트 page/limit (페이지당 최대 100) — 여러 페이지를 모아 최대 ~1000건 조회
-        raw_orders: list = []
-        for _page in range(1, 11):
-            params: dict = {"state": "done", "order_by": "desc", "limit": 100, "page": _page}
-            batch = broker._request("GET", "/orders", params=params)
-            if not isinstance(batch, list) or not batch:
-                break
-            raw_orders.extend(batch)
-            if len(batch) < 100:
-                break
-        if isinstance(raw_orders, list):
-            for o in raw_orders:
-                side = str(o.get("side") or "").lower()   # bid=매수, ask=매도
-                if side == "bid":
-                    side_kr = "buy"
-                elif side == "ask":
-                    side_kr = "sell"
-                else:
-                    side_kr = side
-                if type_filter != "all" and side_kr != type_filter:
-                    continue
-
-                mkt = str(o.get("market") or "")
-                sym = mkt.replace("KRW-", "")
-                if symbol and symbol.upper() not in (mkt.upper(), sym.upper()):
-                    continue
-
-                created_raw = o.get("created_at") or ""
-                # 날짜 범위 필터
-                ts_date = created_raw[:10] if created_raw else ""
-                if ts_date and (ts_date < start_dt or ts_date > end_dt):
-                    continue
-
-                price    = float(o.get("price") or o.get("avg_price") or 0)
-                vol      = float(o.get("executed_volume") or o.get("volume") or 0)
-                amount   = float(o.get("trades_price") or 0) or round(price * vol, 0)
-                paid_fee = float(o.get("paid_fee") or 0)
-
-                items.append({
-                    "tab": "crypto",
-                    "executed_at": created_raw,
-                    "symbol": sym,
-                    "market": "KRW",
-                    "side": side_kr,
-                    "quantity": round(vol, 8),
-                    "unit_price": round(price, 1),
-                    "trade_amount": round(amount, 0),
-                    "fee": round(paid_fee, 2),
-                    "settlement": round(amount - paid_fee if side_kr == "sell" else amount + paid_fee, 0),
-                    "order_id": o.get("uuid", ""),
-                    "slippage_bps": None,
-                    "source": "upbit_api",
-                })
+        for row in fetch_done_orders_from_broker(broker):
+            side_kr = row.get("side", "")
+            if type_filter != "all" and side_kr != type_filter:
+                continue
+            mkt = f"KRW-{row.get('symbol', '')}"
+            sym = str(row.get("symbol") or "")
+            if symbol and symbol.upper() not in (mkt.upper(), sym.upper()):
+                continue
+            created_raw = str(row.get("executed_at") or "")
+            ts_date = created_raw[:10] if created_raw else ""
+            if ts_date and (ts_date < start_dt or ts_date > end_dt):
+                continue
+            items.append(row)
     except Exception as _e:
         import logging
-        logging.getLogger(__name__).debug("upbit orders API 실패, 로컬 폴백: %s", _e)
+        logging.getLogger(__name__).debug("%s orders API 실패, 로컬 폴백: %s", broker_id, _e)
 
-        # ── 2차 폴백: 로컬 audit 파일 ──────────────────────────────
         slip_map = _build_slip_map()
-        patterns = [
-            str(_OUTPUT_DIR / "crypto_telegram_approval_audit_*.json"),
-        ]
+        patterns = [str(_OUTPUT_DIR / "crypto_telegram_approval_audit_*.json")]
         audit_files: list[str] = []
         for pat in patterns:
             audit_files.extend(_glob.glob(pat))
         audit_files.sort()
-
-        for fpath in audit_files:
-            try:
-                raw = json.loads(Path(fpath).read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if not raw.get("executed", False):
-                continue
-            plan = raw.get("plan") or {}
-            if not plan.get("market"):
-                continue
-            created_raw = plan.get("created_at") or ""
-            ts_date = created_raw[:10]
-            if ts_date < start_dt or ts_date > end_dt:
-                continue
-
-            mkt  = plan.get("market") or ""
-            sym  = mkt.replace("KRW-", "")
-            side = str(plan.get("side") or "").lower()
-            if symbol and symbol.upper() not in (mkt.upper(), sym.upper()):
-                continue
-            if type_filter != "all" and side != type_filter:
-                continue
-
-            price    = float(plan.get("limit_price") or 0)
-            amount   = float(plan.get("krw_amount") or 0)
-            slip_key = (mkt, side, round(price, 1))
-            slip     = slip_map.get(slip_key) or {}
-            fill_p   = float(slip.get("fill_price") or price)
-            slip_bps = slip.get("slippage_bps")
-            fee      = round(amount * 0.0005, 2)
-
-            items.append({
-                "tab": "crypto",
-                "executed_at": created_raw,
-                "symbol": sym,
-                "market": "KRW",
-                "side": side,
-                "quantity": round(amount / price, 8) if price > 0 else 0,
-                "unit_price": round(fill_p, 1),
-                "trade_amount": round(amount, 0),
-                "fee": fee,
-                "settlement": round(amount - fee if side == "sell" else amount + fee, 0),
-                "order_id": "",
-                "slippage_bps": slip_bps,
-                "source": "local_audit",
-            })
+        items = trades_from_local_audits(
+            audit_files,
+            slip_map=slip_map,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            type_filter=type_filter,
+            symbol=symbol,
+            broker_id=broker_id,
+        )
 
     return items
 
@@ -4079,7 +4137,8 @@ async def api_runner_recommend(req: RecommendRequest) -> JSONResponse:
 
     cmd_map = {
         "crypto": [sys.executable, str(_PROJECT_ROOT / "main.py"), "crypto-daily-plan",
-                   "--output-dir", str(_OUTPUT_DIR)],
+                   "--output-dir", str(_OUTPUT_DIR),
+                   "--broker", _crypto_broker_id()],
         "stock":  [sys.executable, str(_PROJECT_ROOT / "main.py"), "daily-ai-trade-plan",
                    "--network", "--output-dir", str(_OUTPUT_DIR)],
     }
@@ -4157,6 +4216,14 @@ class SettingsUpdateRequest(BaseModel):
 @app.post("/api/settings")
 async def api_save_settings(req: SettingsUpdateRequest) -> JSONResponse:
     ok, msg = write_settings(_ENV_PATH, req.updates)
+    if ok:
+        import os
+        from dotenv import load_dotenv
+
+        load_dotenv(str(_ENV_PATH), override=True)
+        for key, value in (req.updates or {}).items():
+            if value is not None:
+                os.environ[str(key)] = str(value)
     return JSONResponse({"ok": ok, "message": msg})
 
 
