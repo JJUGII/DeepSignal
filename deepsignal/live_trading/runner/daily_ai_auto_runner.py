@@ -356,6 +356,17 @@ def tick_runner(
             state = run_evening_report(runner, state=state)
         return state
 
+    # ── 주말 가드 ──────────────────────────────────────────────────────
+    # 토/일은 국내장 휴장 — 아침 계획·실행을 시도하면 KIS가 "장 마감" 거부를
+    # 반환하고 그 실패가 텔레그램으로 발송된다(불필요한 알림). 매수 경로 전체를
+    # 건너뛴다(위 _tick_auto_sell 청산·저녁 리포트는 유지). 공휴일은 별도 캘린더
+    # 없이 KIS 거부로 자연 차단되지만, 주말은 빈도가 높아 선차단한다.
+    if now_kst().weekday() >= 5:
+        state.last_event = "skip_weekend(KR 휴장)"
+        if _due_scheduled(state.last_report_date, runner.report_time):
+            state = run_evening_report(runner, state=state)
+        return state
+
     if _due_scheduled(state.last_plan_date, runner.plan_time):
         state = run_morning_plan(runner, db_path=db_path, state=state)
         save_runner_state(runner.output_dir, state)
