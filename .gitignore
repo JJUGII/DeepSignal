@@ -21,8 +21,8 @@ gaein.txt
 .kis_token_cache.json
 outputs/.kis_token_cache.json
 
-# ── 데이터/DB ──
-data/
+# ── 데이터/DB (루트 SQLite만; deepsignal/**/data/ 패키지는 제외)
+/data/
 *.db
 *.sqlite
 *.sqlite3
