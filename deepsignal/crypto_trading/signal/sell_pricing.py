@@ -7,19 +7,26 @@ from deepsignal.crypto_trading.upbit_broker import CryptoHolding
 
 
 def round_crypto_limit_price(price: float) -> float:
-    """Upbit KRW limit orders use integer prices for most alt markets."""
+    """Upbit KRW 호가단위 반올림 (2023.10 개편 — 1,000원 미만 세분화 반영).
+
+    구버전 테이블은 100~1,000원 구간을 1원 단위로 깎아 저가 알트에서
+    최대 ~1% 가격 오차(매수 미체결·매도 헐값)를 만들었다.
+    1,000원 이상 구간은 기존(실거래 검증됨) 유지.
+    """
     px = float(price)
     if px <= 0:
         return 0.0
     if px >= 1_000_000:
         return float(int(round(px / 1000.0)) * 1000)
-    if px >= 10_000:
-        return float(int(round(px)))
+    if px >= 1_000:
+        return float(int(round(px)))                   # 1k~1M: 1원
     if px >= 100:
-        return float(int(round(px)))
+        return round(round(px * 10.0) / 10.0, 1)       # 100~1k: 0.1원
     if px >= 10:
-        return float(int(round(px * 10.0))) / 10.0
-    return float(int(round(px * 100.0))) / 100.0
+        return round(round(px * 100.0) / 100.0, 2)     # 10~100: 0.01원
+    if px >= 1:
+        return round(round(px * 1000.0) / 1000.0, 3)   # 1~10: 0.001원
+    return round(round(px * 10000.0) / 10000.0, 4)     # <1: 0.0001원
 
 
 def compute_sell_limit_price(

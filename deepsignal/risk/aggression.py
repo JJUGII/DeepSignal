@@ -184,6 +184,41 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     else:
         e.pop("CRYPTO_MAX_BUY_KRW_PER_DAY", None)
         e.pop("CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY", None)
+
+    # ── 국내주식·해외주식 일일/주문 캡도 단계 연동 ──────────────────────
+    # L9=3배 완화, L10=사실상 무제한(가용현금이 자연 한도). 1~8은 .env 기본 복원.
+    # 손실 '방지' 게이트(스프레드·체결품질·RR)는 단계와 무관하게 유지 — 한도만 푼다.
+    _b_ord = _base("KIS_STOCK_MAX_ORDERS_PER_DAY", "3") or "3"
+    _b_val = _base("KIS_STOCK_MAX_ORDER_VALUE", "300000") or "300000"
+    _b_sgl = _base("KIS_STOCK_MAX_SINGLE_ORDER_VALUE", _b_val) or _b_val
+    _b_tot = _base("KIS_STOCK_MAX_TOTAL_ORDER_VALUE", _b_val) or _b_val
+    _b_ousd_cap = _base("OVERSEAS_CAPITAL_USD", "1000") or "1000"
+    _b_ousd_sgl = _base("OVERSEAS_MAX_SINGLE_ORDER_USD", "300") or "300"
+    _b_orun = _base("OVERSEAS_MAX_ORDERS_PER_RUN", "3") or "3"
+    if p.level >= 10:
+        e["KIS_STOCK_MAX_ORDERS_PER_DAY"] = "999"
+        e["KIS_STOCK_MAX_ORDER_VALUE"] = "99999999"
+        e["KIS_STOCK_MAX_SINGLE_ORDER_VALUE"] = "99999999"
+        e["KIS_STOCK_MAX_TOTAL_ORDER_VALUE"] = "99999999"
+        e["OVERSEAS_CAPITAL_USD"] = "999999"
+        e["OVERSEAS_MAX_SINGLE_ORDER_USD"] = "999999"
+        e["OVERSEAS_MAX_ORDERS_PER_RUN"] = "10"
+    elif p.level == 9:
+        e["KIS_STOCK_MAX_ORDERS_PER_DAY"] = str(int(float(_b_ord)) * 3)
+        e["KIS_STOCK_MAX_ORDER_VALUE"] = str(int(float(_b_val)) * 3)
+        e["KIS_STOCK_MAX_SINGLE_ORDER_VALUE"] = str(int(float(_b_sgl)) * 3)
+        e["KIS_STOCK_MAX_TOTAL_ORDER_VALUE"] = str(int(float(_b_tot)) * 3)
+        e["OVERSEAS_CAPITAL_USD"] = str(int(float(_b_ousd_cap)) * 3)
+        e["OVERSEAS_MAX_SINGLE_ORDER_USD"] = str(int(float(_b_ousd_sgl)) * 3)
+        e["OVERSEAS_MAX_ORDERS_PER_RUN"] = str(int(float(_b_orun)) * 2)
+    else:
+        e["KIS_STOCK_MAX_ORDERS_PER_DAY"] = str(_b_ord)
+        e["KIS_STOCK_MAX_ORDER_VALUE"] = str(_b_val)
+        e["KIS_STOCK_MAX_SINGLE_ORDER_VALUE"] = str(_b_sgl)
+        e["KIS_STOCK_MAX_TOTAL_ORDER_VALUE"] = str(_b_tot)
+        e["OVERSEAS_CAPITAL_USD"] = str(_b_ousd_cap)
+        e["OVERSEAS_MAX_SINGLE_ORDER_USD"] = str(_b_ousd_sgl)
+        e["OVERSEAS_MAX_ORDERS_PER_RUN"] = str(_b_orun)
     # 일일 손실 한도 = 기준 × 배수
     base_loss = float(_base("DEEPSIGNAL_MAX_DAILY_LOSS_KRW", "100000") or "100000")
     e["DEEPSIGNAL_MAX_DAILY_LOSS_KRW"] = str(int(base_loss * p.daily_loss_mult))
@@ -209,7 +244,8 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     # 실행 직전 0.55 벽에 막힌다. 9~10은 사실상 해제(0.05).
     _exec_wp = round(0.55 * p.entry_threshold_mult, 2)
     if not p.edge_gate_enforced:
-        _exec_wp = 0.05
+        # L9=5%(최소한의 필터), L10=0(도박 — ML 승률 완전 무시)
+        _exec_wp = 0.05 if p.level == 9 else 0.0
     e["CRYPTO_EXEC_MIN_WIN_PROB"] = str(_exec_wp)
     # AI 매도 임계값은 매수 임계값보다 확실히 낮게(절반) — 사자마자 'AI 승률낮음'
     # 으로 즉시 청산되는 모순 방지. (매수 0.05 → 매도 0.02)
@@ -248,12 +284,40 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     _lvl = p.level
     # 매수벽 비율(bid≥ask×r): 낮을수록 완화. 1.0(기본) → 0.3(9~10)
     _wall = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.0, 6: 0.7, 7: 0.6, 8: 0.5, 9: 0.35, 10: 0.3}
-    # 스프레드 허용: 0.25% → 0.6%(9~10)
-    _spr = {1: 0.25, 2: 0.25, 3: 0.25, 4: 0.30, 5: 0.30, 6: 0.35, 7: 0.40, 8: 0.45, 9: 0.55, 10: 0.6}
+    # 스프레드 허용: 0.25% → 0.8%(10, 동적 하드맥스와 정렬). 하락장은 호가가
+    # 0.6~0.8%로 벌어져 0.6 상한이면 사실상 전 종목 차단됨(2026-06-12 123건 실측).
+    _spr = {1: 0.25, 2: 0.25, 3: 0.25, 4: 0.30, 5: 0.30, 6: 0.35, 7: 0.40, 8: 0.45, 9: 0.7, 10: 0.8}
     e["CRYPTO_MIN_BID_ASK_RATIO"] = str(_wall.get(_lvl, 1.0))
     e["CRYPTO_MAX_SPREAD_PCT"] = str(_spr.get(_lvl, 0.25))
-    # 공격적 체결(호가 맨앞=best ask 즉시 체결)은 9~10단계만
+    # 공격적 체결(호가 맨앞=best ask 즉시 체결)은 9~10단계만.
+    # 추격 버퍼: 급등 코인은 ask가 도망가 미체결 — 지정가 상한을 ask 위로.
     e["CRYPTO_AGGRESSIVE_FILL"] = "true" if _lvl >= 9 else "false"
+    e["CRYPTO_AGGRESSIVE_FILL_BUFFER_PCT"] = "0.5" if _lvl >= 10 else ("0.3" if _lvl == 9 else "0.15")
+    # 과매매 쿨다운(재매수/시간당/재진입)·세션 유동성 하한도 단계 연동.
+    # 기본(20분/2회/15분, 거래대금 5억)은 churn 방지용이나 9~10은 고회전 의도라 완화.
+    # 스캔 유니버스 확장: 9~10단계는 업비트 전체 KRW(거래대금 상위)까지 스캔
+    # — 라이브 스트림 메이저 ~30종 밖의 급등주(단독상장 알트)도 시야에 포함.
+    sb("CRYPTO_SCAN_UNION_ALL_KRW", not p.edge_gate_enforced)
+    # 국내주식 전 시장 스캐너(KIS 순위 API) + 장중 재계획 — 워치리스트 47종 밖
+    # 급등주 시야. 9~10단계만 (낮은 단계는 아침 1회 계획의 보수 운용 유지).
+    sb("KR_SCANNER_ENABLED", not p.edge_gate_enforced)
+    # 해외주식 전 시장 스캐너(KIS 해외 조건검색) — 미국장 급등주 시야. 9~10단계만.
+    sb("OVERSEAS_SCANNER_ENABLED", not p.edge_gate_enforced)
+    if _lvl >= 10:
+        e["CRYPTO_REBUY_COOLDOWN_MINUTES"] = "3"
+        e["CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR"] = "12"
+        e["CRYPTO_POST_SELL_REENTRY_COOLDOWN_MINUTES"] = "3"
+        e["CRYPTO_SESSION_MIN_ACC_TRADE_24H"] = "100000000"   # 1억
+    elif _lvl == 9:
+        e["CRYPTO_REBUY_COOLDOWN_MINUTES"] = "10"
+        e["CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR"] = "4"
+        e["CRYPTO_POST_SELL_REENTRY_COOLDOWN_MINUTES"] = "8"
+        e["CRYPTO_SESSION_MIN_ACC_TRADE_24H"] = "300000000"   # 3억
+    else:
+        for _k in ("CRYPTO_REBUY_COOLDOWN_MINUTES", "CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR",
+                   "CRYPTO_POST_SELL_REENTRY_COOLDOWN_MINUTES", "CRYPTO_SESSION_MIN_ACC_TRADE_24H"):
+            e.pop(_k, None)
+
     # 손절 하한(가장 타이트해도 이 값): 공격 체결 단계는 스프레드+수수료보다 넓게.
     # sl_pct_max(=손절 상한, 음수 중 0에 가까운 쪽)를 더 음수로 밀어 타이트 손절 방지.
     _sl_floor = {9: -1.3, 10: -1.5}
@@ -261,6 +325,18 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
         e["CRYPTO_SL_PCT_MAX"] = str(_sl_floor[_lvl])
     else:
         e.pop("CRYPTO_SL_PCT_MAX", None)
+    # 손익비 교정(실측 이익+0.67 vs 손실-2.63 = 1:4 역전):
+    # ① 손절 최대깊이 -3.0% → -2.0%(9~10) — 손실은 짧게
+    # ② 트레일링 폭 0.8% → 2.0/2.5%(9~10) — 이익은 길게 달리기
+    if _lvl >= 9:
+        e["CRYPTO_SL_PCT_MIN"] = "-2.0"
+        e["CRYPTO_TRAILING_STOP_PCT"] = "2.5" if _lvl >= 10 else "2.0"
+        # 타임스톱 완화: 5분→15분 — 짧으면 왕복비용(~0.4%)만 확정하고 나가는 churn
+        e["CRYPTO_TIME_STOP_MINUTES"] = "15"
+    else:
+        e.pop("CRYPTO_SL_PCT_MIN", None)
+        e.pop("CRYPTO_TRAILING_STOP_PCT", None)
+        e.pop("CRYPTO_TIME_STOP_MINUTES", None)
 
     # ── 주식 익절/손절도 단계 연동 (높을수록 익절 목표↑=수익 달리기, 손절폭↑=여유) ──
     # 분수 단위(0.15 = +15%, -0.07 = -7%)

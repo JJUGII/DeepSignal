@@ -507,16 +507,16 @@ def _run_crypto_auto_tick_body(
             result["overtrading_reason"] = ot_reason
             return result
         if (
-            int(cfg.max_distinct_buy_markets_per_day or 0) > 0
+            _cap_mkts > 0
             and rec.market.upper() not in buy_markets_today
-            and len(buy_markets_today) >= int(cfg.max_distinct_buy_markets_per_day)
+            and len(buy_markets_today) >= _cap_mkts
         ):
             result["action"] = "blocked_distinct_buy_markets_cap"
             result["blocked_market"] = rec.market
             return result
-        if float(cfg.max_buy_krw_per_day or 0.0) > 0 and (
+        if _cap_krw > 0 and (
             buy_krw_today + float(plan.krw_amount)
-        ) > float(cfg.max_buy_krw_per_day):
+        ) > _cap_krw:
             result["action"] = "blocked_buy_krw_cap"
             result["blocked_market"] = rec.market
             result["blocked_amount"] = float(plan.krw_amount)

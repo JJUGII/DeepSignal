@@ -100,10 +100,13 @@ class ExecutionEngineConfig:
     use_mid_or_bid_plus_tick: bool = True
     kelly_max_fraction: float = 0.05
     kelly_min_fraction: float = 0.01
-    trailing_stop_pct: float = 0.8
+    # 트레일링 폭: 다이얼 연동(CRYPTO_TRAILING_STOP_PCT). 좁으면 이익을 일찍 끊음
+    # (실측: 0.8%에서 트레일링 매도 12건 평균 -0.52%). 높은 단계는 이익 달리기.
+    trailing_stop_pct: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_TRAILING_STOP_PCT") or 0.8))
     partial_tp_pct: float = 1.2
     partial_tp_fraction: float = 0.5
-    time_stop_minutes: float = 5.0
+    # 타임스톱: 방향 안 나오면 청산. 너무 짧으면 왕복비용(~0.4%)만 확정 — 다이얼 연동
+    time_stop_minutes: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_TIME_STOP_MINUTES") or 5.0))
     time_stop_max_abs_pnl_pct: float = 0.5
     ai_recheck_interval_sec: float = 30.0
     take_profit_pct: float = _CRYPTO.take_profit_pct
@@ -276,8 +279,9 @@ def check_orderbook_for_buy(
         # CRYPTO_DYNAMIC_SPREAD_ENABLED=true 면 동적 임계값 사용
         _dyn_allowed, _dyn_reason = gate.check(market, spread_pct)
         if not _dyn_allowed:
-            # 동적 게이트가 활성화됐고 차단됨 → max_spread_pct 무시하고 동적 기준 적용
-            effective_max = gate.threshold(market)
+            # 동적 기준은 정적 한도(공격성 단계 의도값)보다 '엄격해지지 않게' —
+            # 신규 코인 fallback(0.30%)이 L10 0.8%를 덮어 급등주를 차단하던 버그.
+            effective_max = max(float(max_spread_pct), float(gate.threshold(market)))
         else:
             effective_max = max_spread_pct  # 비활성 or 통과: 원래 기준 유지
     except Exception:
@@ -309,13 +313,23 @@ def compute_entry_limit_price(
     ob: OrderbookCheckResult,
     *,
     use_mid: bool = True,
+    attempt: int = 0,
 ) -> float:
     # 공격적 체결(높은 공격성 단계): 호가 맨앞(best ask)을 지정가로 잡아 즉시 체결.
     # 스프레드 게이트를 이미 통과한 뒤이므로 지불 스프레드는 한도 내로 제한된다.
     import os as _o
     if _o.environ.get("CRYPTO_AGGRESSIVE_FILL", "").strip().lower() in ("1", "true", "yes", "on"):
         if ob.best_ask > 0:
-            return round_crypto_limit_price(ob.best_ask)
+            # 진입 프리미엄 절감: 1차 시도는 정확히 best ask(버퍼 0) — 대부분 여기서
+            # 체결된다. 미체결 재시도(attempt≥1)에만 추격 버퍼를 얹어 급등을 쫓는다.
+            # (버퍼를 첫 시도부터 쓰면 평균 매수가가 ~0.3% 비싸짐 — 실측 28.9bps)
+            if attempt <= 0:
+                return round_crypto_limit_price(ob.best_ask)
+            try:
+                _buf = float(_o.environ.get("CRYPTO_AGGRESSIVE_FILL_BUFFER_PCT", "0.15") or 0.15)
+            except ValueError:
+                _buf = 0.15
+            return round_crypto_limit_price(ob.best_ask * (1.0 + max(0.0, _buf) / 100.0))
     if use_mid and ob.mid_price > 0:
         return round_crypto_limit_price(ob.mid_price)
     if ob.best_bid > 0:
@@ -658,7 +672,7 @@ class CryptoExecutionEngine:
                     min_bid_ask_ratio=cfg.min_bid_ask_volume_ratio,
                     levels=cfg.orderbook_levels,
                 )
-                limit_px = compute_entry_limit_price(ob, use_mid=cfg.use_mid_or_bid_plus_tick)
+                limit_px = compute_entry_limit_price(ob, use_mid=cfg.use_mid_or_bid_plus_tick, attempt=attempt)
                 if not ob.allowed:
                     break
 

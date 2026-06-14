@@ -39,12 +39,12 @@ def compute_overseas_scores(output_dir: str | Path) -> list[dict[str, Any]]:
 
     os_dir = Path(output_dir) / "kis_overseas"
     bars_dir = os_dir / "bars"
-    if not bars_dir.exists():
-        return []
 
     eng = StockFeatureEngine()
     scores: list[dict[str, Any]] = []
-    for bar_file in sorted(bars_dir.glob("*_1m.jsonl")):
+    if not bars_dir.exists():
+        bars_dir = None  # 봉 없음 — 스캐너 병합만으로 진행
+    for bar_file in (sorted(bars_dir.glob("*_1m.jsonl")) if bars_dir else []):
         sym = bar_file.name.replace("_1m.jsonl", "")
         try:
             lines = bar_file.read_text(encoding="utf-8").strip().splitlines()
@@ -66,6 +66,28 @@ def compute_overseas_scores(output_dir: str | Path) -> list[dict[str, Any]]:
             })
         except Exception:
             pass
+    # ── 전 시장 급등주 스캐너 병합 (다이얼 L9-10) ──
+    # 스트림 봉이 없는 급등주를 KIS 조건검색 캐시에서 끌어와 스코어 풀에 합친다.
+    # 점수는 등락률 주도(국내 스캐너와 동일 스케일). 기존 종목과 중복 시 미추가.
+    try:
+        if os.environ.get("OVERSEAS_SCANNER_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"):
+            from deepsignal.live_trading.overseas_market_scanner import load_overseas_movers
+            have = {s["symbol"] for s in scores}
+            for m in load_overseas_movers(output_dir):
+                if m["symbol"] in have:
+                    continue
+                chg = float(m.get("change_pct") or 0)
+                sc = round(min(97.0, 28.0 + min(60.0, chg * 4.0)
+                               + (6.0 if float(m.get("turnover_usd") or 0) >= 5e7 else 0.0)), 1)
+                scores.append({
+                    "symbol": m["symbol"], "price": float(m["price"]),
+                    "total_score": sc, "action": "BUY", "hard_blocked": False,
+                    "sub_scores": {}, "name": m.get("name"),
+                    "reason": f"전시장 급등 스캔: {m.get('name')} {chg:+.1f}%",
+                })
+    except Exception:
+        pass
+
     scores.sort(key=lambda x: x["total_score"], reverse=True)
     return scores
 

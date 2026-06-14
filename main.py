@@ -744,6 +744,24 @@ def cmd_market_open_report(args: argparse.Namespace) -> int:
     return 0 if res.get("ok") else 0  # 발송 실패해도 러너 죽지 않게 0
 
 
+def cmd_kr_scan(args: argparse.Namespace) -> int:
+    """[국내-스캔] 전 시장 급등주 스캔(KIS 순위 API) → kr_movers_v1 신호 기록."""
+    import os as _o
+    try:
+        from dotenv import load_dotenv as _ld
+        _ld()
+    except ImportError:
+        pass
+    _apply_aggression_dial()
+    if getattr(args, "force", False):
+        _o.environ["KR_SCANNER_ENABLED"] = "true"
+    from deepsignal.live_trading.kr_market_scanner import run_kr_scan
+    import json as _j
+    res = run_kr_scan()
+    print(_j.dumps(res, ensure_ascii=False, indent=1))
+    return 0
+
+
 def cmd_crypto_news_refresh(args: argparse.Namespace) -> int:
     """[코인-LLM] 코인 뉴스 감성/악재를 LLM으로 분석해 캐시에 기록.
 
@@ -1294,8 +1312,11 @@ def cmd_crypto_retrain_lgbm(args: argparse.Namespace) -> int:
     )
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     print(result.reason)
+    # "샘플 부족"은 에러가 아니라 정상 no-op(아직 체결 데이터 미달) — 종료코드 0.
+    # 1을 반환하면 launchd가 매일 경고로 표시(허위 알람). 진짜 예외만 main()이 1로.
     if "insufficient" in result.reason:
-        return 1
+        print(f"[정상 스킵] 재학습 보류 — 체결 샘플 부족. 기존 모델 유지. ({result.reason})")
+        return 0
     return 0
 
 
@@ -1737,8 +1758,10 @@ def cmd_overseas_auto_runner(args: argparse.Namespace) -> int:
             if not tok or not chat:
                 return
             from deepsignal.live_trading.telegram.approval import telegram_api_post
+            # 해외 체결/실패 포맷은 <b> HTML 태그 사용 — Markdown이면 태그가 그대로 보임
+            _pm = "HTML" if ("<b>" in text or "<code>" in text) else "Markdown"
             telegram_api_post("sendMessage",
-                {"chat_id": chat, "text": text, "parse_mode": "Markdown"}, bot_token=tok)
+                {"chat_id": chat, "text": text, "parse_mode": _pm}, bot_token=tok)
         except Exception:
             pass
 
@@ -5773,6 +5796,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_agr = sub.add_parser("aggression-report", help="[보고] 공격성 단계별·추격거래별 성과 집계 (단계 재책정용)")
     p_agr.add_argument("--output-dir", type=str, default="outputs")
     p_agr.add_argument("--telegram", action="store_true", help="결과를 텔레그램으로도 발송")
+    p_krs = sub.add_parser("kr-scan", help="[국내-스캔] 전 시장 급등주 스캔(KIS 순위 API) → 신호 기록")
+    p_krs.add_argument("--force", action="store_true", help="KR_SCANNER_ENABLED 무시하고 강제 실행")
     p_nws = sub.add_parser("crypto-news-refresh", help="[코인-LLM] 뉴스 감성/악재를 LLM 분석해 캐시 갱신 (스코어·게이트가 읽음)")
     p_nws.add_argument("--output-dir", type=str, default="outputs")
     p_nws.add_argument("--markets", type=str, default="", help="쉼표구분 마켓 고정 (예: KRW-BTC,KRW-XRP). 미지정시 유니버스 상위")
@@ -5992,6 +6017,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_aggression_report(args)
     elif args.command == "crypto-news-refresh":
         return cmd_crypto_news_refresh(args)
+    elif args.command == "kr-scan":
+        return cmd_kr_scan(args)
     elif args.command == "regime-trend-status":
         return cmd_regime_trend_status(args)
     elif args.command == "regime-trend-run":

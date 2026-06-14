@@ -459,6 +459,22 @@ def build_crypto_recommendation(
                         ticker_map[m] = broker.get_ticker(m)
                     except Exception:
                         pass
+            # ── 유니버스 확장(다이얼 연동): 라이브 스트림은 메이저 ~30종뿐이라
+            # 업비트 단독상장 급등주(SOPH·XPL 등)가 시야 밖이었다. 켜면 업비트
+            # 전체 KRW 거래대금 상위까지 스캔에 합친다(품질 게이트는 동일 적용).
+            import os as _os_uni
+            if _os_uni.environ.get("CRYPTO_SCAN_UNION_ALL_KRW", "false").strip().lower() in ("1", "true", "yes", "on"):
+                try:
+                    full_meta = resolve_crypto_markets(broker, config=ucfg, holdings_markets=hold_markets)
+                    extra = [m for m in full_meta.markets if m in valid_upbit and m not in ticker_map]
+                    if extra:
+                        extra_t = fetch_tickers_batched(
+                            broker, extra, batch_size=100, valid_markets=valid_upbit)
+                        ticker_map.update(extra_t)
+                        scan_markets = tuple(dict.fromkeys(
+                            list(scan_markets) + [m for m in extra if m in extra_t]))
+                except Exception:
+                    pass
         else:
             universe_meta = resolve_crypto_markets(
                 broker,
@@ -548,11 +564,42 @@ def build_crypto_recommendation(
         _logging.getLogger(__name__).debug("[rt_features] 로드 실패: %s", _e)
 
     _static_excluded = {m.upper() for m in (getattr(_CRYPTO, "static_excluded_markets", ()) or ())}
+
+    # ── 연속 손절 차단: 당일 같은 코인 N회(기본 2) 손절이면 그날 재매수 금지 ──
+    # 실측: ERA 7연속 손절(-15%) 등 '같은 칼날 반복'이 최대 출혈원. 전 단계 적용.
+    _sl_blocked: set[str] = set()
+    try:
+        import os as _os_slb
+        _max_sl = int(float(_os_slb.environ.get("CRYPTO_MAX_STOP_LOSS_PER_MARKET_PER_DAY", "2") or 2))
+        if _max_sl > 0:
+            import sqlite3 as _sq
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            _db = _Path(output_dir) / "crypto_recommendation_outcomes.db"
+            if _db.exists():
+                _today = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d")
+                _conn = _sq.connect(str(_db))
+                for _mk, _n in _conn.execute(
+                    "SELECT market, COUNT(*) FROM crypto_recommendation_outcomes "
+                    "WHERE side='sell' AND realized_pnl_pct < 0 AND created_at LIKE ? "
+                    "AND (exit_reason LIKE '%손절%' OR reason LIKE '%손절%' "
+                    "     OR exit_reason LIKE '%stop_loss%' OR reason LIKE '%트레일링%') "
+                    "GROUP BY market HAVING COUNT(*) >= ?", (_today + "%", _max_sl)
+                ):
+                    _sl_blocked.add(str(_mk).upper())
+                _conn.close()
+            if _sl_blocked:
+                import logging as _lg_slb
+                _lg_slb.getLogger(__name__).info(
+                    "[연속손절차단] 오늘 재매수 금지: %s", sorted(_sl_blocked))
+    except Exception:
+        _sl_blocked = set()
     for t in tickers:
         if t.market.upper() in excluded:
             continue
         if t.market.upper() in _static_excluded:
             continue
+        if t.market.upper() in _sl_blocked:
+            continue  # 당일 연속 손절 코인 — 같은 칼날 재진입 금지
         # 추격매수 캡: 기본은 보수적(8%)이나 공격성 다이얼이 올리면 급등주도 허용
         _chg_cap = float(_CRYPTO.session_max_signed_change_rate)
         try:
@@ -564,7 +611,15 @@ def build_crypto_recommendation(
             pass
         if abs(float(t.signed_change_rate or 0.0)) > _chg_cap:
             continue
-        if float(t.acc_trade_price_24h or 0.0) < float(_CRYPTO.session_min_acc_trade_price_24h):
+        # 세션 유동성 하한: 공격성 다이얼이 낮추면 거래대금 작은 코인도 스캔 허용
+        _acc_floor = float(_CRYPTO.session_min_acc_trade_price_24h)
+        try:
+            _ov_acc = _os_cc.environ.get("CRYPTO_SESSION_MIN_ACC_TRADE_24H", "").strip()
+            if _ov_acc:
+                _acc_floor = min(_acc_floor, float(_ov_acc))
+        except ValueError:
+            pass
+        if float(t.acc_trade_price_24h or 0.0) < _acc_floor:
             continue
         if runner_state is not None:
             ok, _ = check_buy_allowed(

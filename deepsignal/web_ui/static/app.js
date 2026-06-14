@@ -1550,7 +1550,7 @@ async function loadDashboard() {
   // 한글 코인명 로드 (최초 1회, 이후 캐시)
   loadCoinNames();
 
-  const [d, approval, kpos, kimchi, scoresRes, returnsData, openOrders, orderFailures] = await Promise.all([
+  const [d, approval, kpos, kimchi, scoresRes, returnsData, openOrders, orderFailures, ospos] = await Promise.all([
     GET('/api/status'),
     GET('/api/approval').catch(() => ({ crypto: {}, stock: {} })),
     GET('/api/kstock/positions').catch(() => ({ exists: false, positions: [] })),
@@ -1559,6 +1559,7 @@ async function loadDashboard() {
     GET(`/api/stats/returns?period=${_returnsPeriod}`).catch(() => null),
     GET('/api/orders/open?market=all').catch(() => ({ items: [] })),
     GET('/api/orders/failures?limit=5').catch(() => ({ items: [] })),
+    GET('/api/overseas/positions').catch(() => ({ exists: false, positions: [] })),
   ]);
   // 수익률 캐시 갱신
   if (returnsData) _returnsCache[_returnsPeriod] = { ts: Date.now(), data: returnsData };
@@ -1788,6 +1789,24 @@ async function loadDashboard() {
             </div>
           </div>
 
+          <!-- 해외 자산 (보유현황 통합) -->
+          ${(() => {
+            const op = ospos || {}; const ps = op.positions || [];
+            const totUsd = op.total_usd_value || 0, pnlUsd = op.total_usd_pnl || 0;
+            const pnlPct = (totUsd - pnlUsd) > 0 ? (pnlUsd / (totUsd - pnlUsd)) * 100 : 0;
+            return `<div class="status-card info">
+              <div class="status-card-label">해외 자산 ${exchBadge('kis')}</div>
+              <div class="status-card-value">${fmt_krw(Math.round(op.total_krw_value || 0))}</div>
+              <div class="status-card-row"><span class="sc-key">평가 (USD)</span><span class="sc-val">$${totUsd.toLocaleString(undefined,{maximumFractionDigits:2})}</span></div>
+              <div class="status-card-row"><span class="sc-key">매수가능</span><span class="sc-val">$${(op.cash_usd||0).toLocaleString(undefined,{maximumFractionDigits:2})}</span></div>
+              <div class="status-card-divider"></div>
+              <div class="status-card-row">
+                <span class="sc-key">보유 종목</span>
+                <span class="sc-val ${ps.length ? (pnlUsd>=0?'text-up':'text-down') : ''}">${ps.length}종목${ps.length ? ` &nbsp;${gradPct(pnlPct)}` : ''}</span>
+              </div>
+            </div>`;
+          })()}
+
           <!-- 김치프리미엄 (인라인 슬림) -->
           ${kimchi ? (() => {
             const prems = Object.values(kimchi.premiums || {});
@@ -1810,6 +1829,24 @@ async function loadDashboard() {
           <div class="section-box">
             <div class="section-title">국내주식 포지션 ${exchBadge('kis')}${helpBtn('holding_pnl')}</div>
             ${holdingTable(stockRows, ['종목', '수량', '평균단가', '현재가', '평가금액', `수익률${helpBtn('holding_pnl')}`, `동적 TP/SL${helpBtn('tp_sl')}`])}
+          </div>
+          <div class="section-box">
+            <div class="section-title">해외주식 포지션 ${exchBadge('kis')}${helpBtn('holding_pnl')}</div>
+            ${(() => {
+              const ps = (ospos && ospos.positions) || [];
+              if (!ps.length) return '<div class="text-muted" style="font-size:12px;padding:8px 2px">보유 없음</div>';
+              const rows = ps.map(p => `<tr>
+                <td><strong style="font-size:12px">${escHtml(p.name || p.symbol)}</strong> <span style="font-size:10px;color:var(--text-muted)">${escHtml(p.symbol)}</span></td>
+                <td style="text-align:right">${Number(p.quantity||0).toLocaleString()}</td>
+                <td style="text-align:right">$${(p.avg_price_usd||0).toLocaleString(undefined,{maximumFractionDigits:4})}</td>
+                <td style="text-align:right">$${(p.cur_price_usd||0).toLocaleString(undefined,{maximumFractionDigits:4})}</td>
+                <td style="text-align:right">${fmt_krw(p.value_krw)} <span style="font-size:10px;color:var(--text-muted)">($${(p.value_usd||0).toFixed(2)})</span></td>
+                <td style="text-align:right" class="${(p.pnl_pct||0)>=0?'text-up':'text-down'}">${(p.pnl_pct||0)>=0?'+':''}${(p.pnl_pct||0).toFixed(2)}%</td>
+              </tr>`).join('');
+              return `<div class="table-wrap"><table>
+                <thead><tr><th>종목</th><th style="text-align:right">수량</th><th style="text-align:right">평균단가</th><th style="text-align:right">현재가</th><th style="text-align:right">평가금액</th><th style="text-align:right">수익률</th></tr></thead>
+                <tbody>${rows}</tbody></table></div>`;
+            })()}
           </div>
         </div>
 
@@ -4804,7 +4841,7 @@ async function renderTrades() {
         : '<span class="text-muted" style="font-size:10px">-</span>';
       return `<tr>
         <td style="white-space:nowrap">${fmt_ts(t.executed_at)}</td>
-        <td><strong style="font-size:12px">${escHtml(t.symbol||'-')}</strong></td>
+        <td><strong style="font-size:12px">${escHtml(t.name || t.symbol || '-')}</strong>${(t.name && t.symbol && t.name !== t.symbol) ? ` <span style="font-size:10px;color:var(--text-muted)">${escHtml(t.symbol)}</span>` : ''}</td>
         <td style="text-align:center">${sideBadge}</td>
         <td style="font-size:12px;text-align:right">${fmt_qty(t.quantity)}</td>
         <td style="font-size:12px;text-align:right">${fmt_price(t.unit_price, t.market)}</td>

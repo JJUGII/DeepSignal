@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Any
 
 from deepsignal.live_trading.time_utils import now_kst
@@ -11,11 +12,25 @@ from deepsignal.scoring.analysis_conditions import DEFAULT_ANALYSIS_CONDITIONS
 _CRYPTO = DEFAULT_ANALYSIS_CONDITIONS.crypto
 
 
+def _env_int(key: str, default: int) -> int:
+    """env 오버라이드(공격성 다이얼) — 인스턴스 생성 시점에 읽어 런타임 반영."""
+    raw = os.environ.get(key, "").strip()
+    if raw != "":
+        try:
+            return int(float(raw))
+        except ValueError:
+            pass
+    return int(default)
+
+
 @dataclass(frozen=True)
 class OvertradingGuardConfig:
-    rebuy_cooldown_minutes: int = _CRYPTO.rebuy_cooldown_minutes
-    max_buy_per_market_per_hour: int = _CRYPTO.max_buy_per_market_per_hour
-    post_sell_reentry_cooldown_minutes: int = _CRYPTO.post_sell_reentry_cooldown_minutes
+    rebuy_cooldown_minutes: int = field(default_factory=lambda: _env_int(
+        "CRYPTO_REBUY_COOLDOWN_MINUTES", _CRYPTO.rebuy_cooldown_minutes))
+    max_buy_per_market_per_hour: int = field(default_factory=lambda: _env_int(
+        "CRYPTO_MAX_BUY_PER_MARKET_PER_HOUR", _CRYPTO.max_buy_per_market_per_hour))
+    post_sell_reentry_cooldown_minutes: int = field(default_factory=lambda: _env_int(
+        "CRYPTO_POST_SELL_REENTRY_COOLDOWN_MINUTES", _CRYPTO.post_sell_reentry_cooldown_minutes))
     max_buy_krw_per_market_per_day_pct: float = _CRYPTO.max_buy_krw_per_market_per_day_pct
     max_add_on_buys_per_market_per_day: int = _CRYPTO.max_add_on_buys_per_market_per_day
     min_hold_minutes_before_sell: int = _CRYPTO.min_hold_minutes_before_sell

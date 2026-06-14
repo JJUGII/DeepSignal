@@ -118,6 +118,21 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
+def _eff_sl_pct_min() -> float:
+    """손절 하한(가장 깊은 손절, 음수 중 가장 작은 값). 공격성 다이얼의
+    CRYPTO_SL_PCT_MIN 이 있으면 손절 깊이를 줄인다(실측 평균 -2.6% 출혈 교정).
+    '덜 깊게'(0 쪽으로)만 이동 — 더 깊어지는 방향은 무시."""
+    base = float(_CRYPTO.sl_pct_min)
+    import os as _o
+    ov = _o.environ.get("CRYPTO_SL_PCT_MIN", "").strip()
+    if ov:
+        try:
+            return max(base, float(ov))
+        except ValueError:
+            pass
+    return base
+
+
 def _eff_sl_pct_max() -> float:
     """손절 상한(0에 가장 가까운 = 가장 타이트한 손절). 공격성 다이얼의
     CRYPTO_SL_PCT_MAX 가 있으면 그만큼 손절을 넓힌다(스프레드 churn 방지)."""
@@ -188,7 +203,7 @@ def merge_tp_sl(
                 )
                 sl = _clamp(
                     float(tuned.stop_loss_pct),
-                    float(_CRYPTO.sl_pct_min),
+                    _eff_sl_pct_min(),
                     _eff_sl_pct_max(),
                 )
                 source = "outcomes"
@@ -200,7 +215,7 @@ def merge_tp_sl(
             )
             sl = _clamp(
                 float(tuned.stop_loss_pct),
-                float(_CRYPTO.sl_pct_min),
+                _eff_sl_pct_min(),
                 _eff_sl_pct_max(),
             )
             source = "outcomes"
@@ -216,7 +231,7 @@ def merge_tp_sl(
         tp_d, sl_d, src_d = dynamic
         # 기존 밴드 내로 클램프 (tp: 1%~4%, sl: -3%~-0.8%)
         tp = _clamp(tp_d, float(_CRYPTO.tp_pct_min), float(_CRYPTO.tp_pct_max))
-        sl = _clamp(sl_d, float(_CRYPTO.sl_pct_min), _eff_sl_pct_max())
+        sl = _clamp(sl_d, _eff_sl_pct_min(), _eff_sl_pct_max())
         source = src_d
 
     # ── 김치프리미엄 SL 조정 ────────────────────────────────────────────────
@@ -231,7 +246,7 @@ def merge_tp_sl(
         kp = get_premium("BTC")  # BTC를 시장 대표 프록시로 사용
         if kp is not None and kp.premium_pct > LEVEL_LOW:
             factor = 1.0 + kp.premium_pct / 100.0
-            sl_adj = _clamp(sl * factor, float(_CRYPTO.sl_pct_min), _eff_sl_pct_max())
+            sl_adj = _clamp(sl * factor, _eff_sl_pct_min(), _eff_sl_pct_max())
             if sl_adj != sl:
                 _LOG.debug(
                     "[kimchi_tpsl] 김치프리미엄 %.1f%% → SL %.3f→%.3f",
@@ -258,7 +273,7 @@ def _tp_sl_from_atr(atr_pct: float) -> tuple[float, float, str]:
     )
     sl = -_clamp(
         float(atr_pct) * float(_CRYPTO.atr_sl_multiplier),
-        abs(float(_CRYPTO.sl_pct_min)),
+        abs(_eff_sl_pct_min()),
         abs(_eff_sl_pct_max()),
     )
     return round(tp, 3), round(sl, 3), "atr"

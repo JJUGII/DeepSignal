@@ -325,7 +325,7 @@ class KISBroker(BrokerInterface):
             sym = self._pick_str(row, ("pdno", "PDNO")) or (pdno or "")
             oqty = self._pick_int(row, ("ord_qty", "ORD_QTY", "ord_qty"))
             fq = self._pick_int(row, ("tot_ccld_qty", "TOT_CCLD_QTY", "ccld_qty"))
-            rq = self._pick_int(row, ("rmnd_qty", "RMND_QTY", "nccs_qty"))
+            rq = self._pick_int(row, ("rmn_qty", "RMN_QTY", "rmnd_qty", "RMND_QTY", "nccs_qty"))
             if rq is None and oqty is not None and fq is not None:
                 rq = max(0, oqty - fq)
             op = self._pick_float(row, ("ord_unpr", "ORD_UNPR", "ord_unpr"))

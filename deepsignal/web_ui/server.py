@@ -1312,6 +1312,11 @@ def _get_open_orders_stock() -> list[dict]:
             rq = st.remaining_quantity or 0
             if rq and rq > 0:
                 raw = st.raw if isinstance(st.raw, dict) else {}
+                # 취소 주문(매도취소/매수취소 행)은 대기중이 아님 — 제외
+                _mr = raw.get("matched_row") or {}
+                _dvsn = str(_mr.get("sll_buy_dvsn_cd_name") or "")
+                if "취소" in _dvsn or "정정" in _dvsn:
+                    continue
                 org_no = (raw.get("ord_gno_brno") or raw.get("ORD_GNO_BRNO")
                           or raw.get("KRX_FWDG_ORD_ORGNO") or raw.get("krx_fwdg_ord_orgno") or "")
                 out.append({
@@ -2220,18 +2225,20 @@ def _fetch_overseas_trades(
 
         s = start_dt.replace("-", "")
         e = end_dt.replace("-", "")
-        tr = "JTTT3001R"
+        # TTTS3035R(개인 실전) — JTTT3001R은 이 계좌에서 최근 1건만 반환.
+        # PDNO/OVRS_EXCG_CD '%' = 전 종목·전 거래소 (실측 1건 → 20건).
+        tr = "TTTS3035R"
         path = "/uapi/overseas-stock/v1/trading/inquire-ccnl"
         headers = broker._inquire_headers(tr)
         params: dict = {
             "CANO": cfg.account_no.strip(),
             "ACNT_PRDT_CD": cfg.account_product_code.strip(),
-            "PDNO": symbol.upper() if symbol else "",
+            "PDNO": symbol.upper() if symbol else "%",
             "ORD_STRT_DT": s,
             "ORD_END_DT": e,
             "SLL_BUY_DVSN": "00",
             "CCLD_NCCS_DVSN": "01",   # 체결만
-            "OVRS_EXCG_CD": "NASD",
+            "OVRS_EXCG_CD": "%",
             "SORT_SQN": "DS",
             "ORD_DT": "",
             "ORD_GNO_BRNO": "",
@@ -2293,8 +2300,8 @@ def _fetch_overseas_trades(
             if type_filter != "all" and side != type_filter:
                 continue
 
-            sym  = str(row.get("ovrs_pdno") or "").strip()
-            name = str(row.get("ovrs_item_name") or sym).strip()
+            sym  = str(row.get("pdno") or row.get("ovrs_pdno") or "").strip()
+            name = str(row.get("prdt_name") or row.get("ovrs_item_name") or sym).strip()
             if symbol and symbol.upper() not in (sym.upper(), name.upper()):
                 continue
 
@@ -3098,10 +3105,11 @@ def _cached_usd_rate(fresh_rate: float | None = None) -> float:
 
 
 def _get_overseas_positions() -> dict:
-    """KIS 해외주식 보유 포지션 조회 (JTTT3012R).
+    """KIS 해외주식 보유 포지션 조회.
 
-    거래소별 (NASD/NYSE/AMEX/TKSE/SEHK) 포지션을 합산하고
-    원화 환산 수익/잔고를 계산합니다.
+    종목 목록은 검증된 broker.get_positions_overseas()(TTTS3012R, 거래소 순회)를
+    사용한다. (구버전은 CTRP6548R output1을 종목 목록으로 오인 — 실제로는
+    자산 요약이라 항상 0건이었음.)
     """
     try:
         from dotenv import load_dotenv
@@ -3113,7 +3121,7 @@ def _get_overseas_positions() -> dict:
         cfg = load_kis_config_from_env(load_dotenv_file=False)
         broker = KISBroker(cfg)
 
-        # 환율 조회
+        # 환율 (CTRP6548R output2 — 실패 시 마지막 성공값)
         try:
             rate_resp = _req.get(
                 f"{cfg.base_url}/uapi/overseas-stock/v1/trading/inquire-present-balance",
@@ -3121,115 +3129,60 @@ def _get_overseas_positions() -> dict:
                 params={
                     "CANO": cfg.account_no.strip(),
                     "ACNT_PRDT_CD": cfg.account_product_code.strip(),
-                    "OVRS_EXCG_CD": "NASD",
-                    "WCRC_FRCR_DVSN_CD": "02",
-                    "NATN_CD": "840",
-                    "TR_MKET_CD": "01",
-                    "INQR_DVSN": "00",
+                    "OVRS_EXCG_CD": "NASD", "WCRC_FRCR_DVSN_CD": "02",
+                    "NATN_CD": "840", "TR_MKET_CD": "01", "INQR_DVSN": "00",
                 },
                 timeout=8,
             )
             rate_body = rate_resp.json() if rate_resp.status_code == 200 else {}
             _raw_rate = float((rate_body.get("output2") or [{}])[0].get("frst_bltn_exrt") or 0)
-            usd_rate = _cached_usd_rate(_raw_rate)   # 성공 시 갱신, 실패 시 마지막값
+            usd_rate = _cached_usd_rate(_raw_rate)
         except Exception:
-            usd_rate = _cached_usd_rate()            # 마지막 성공값 폴백
-
-        # inquire-present-balance (CTRP6548R) → output1=보유종목, output2=환율·계좌요약
-        # 거래소별로 조회하여 모든 보유 종목을 수집
-        path = "/uapi/overseas-stock/v1/trading/inquire-present-balance"
-        # 실전: CTRP6548R / 모의: VTRP6548R
-        tr = "VTRP6548R" if not cfg.is_live else "CTRP6548R"
+            usd_rate = _cached_usd_rate()
 
         all_positions: list[dict] = []
-        seen_symbols: set[str] = set()
         total_usd_value = 0.0
         total_usd_pnl = 0.0
-        cash_usd = 0.0
 
-        # 미국 3대 거래소 순회 + 전체 조회 (OVRS_EXCG_CD 공백)
-        exchanges_to_try = ["NASD", "NYSE", "AMEX", ""]
-        for excg in exchanges_to_try:
+        for p in broker.get_positions_overseas():
+            raw = p.raw if isinstance(p.raw, dict) else {}
+            qty = float(raw.get("qty_exact") or p.quantity or 0)
+            if qty <= 0:
+                continue
+            avg = float(p.avg_price or 0)
+            cur = float(p.current_price or 0)
+            val = float(p.market_value or 0) or round(cur * qty, 2)
+            pnl_usd = float(raw.get("frcr_evlu_pfls_amt") or 0) or round((cur - avg) * qty, 2)
             try:
-                params: dict = {
-                    "CANO": cfg.account_no.strip(),
-                    "ACNT_PRDT_CD": cfg.account_product_code.strip(),
-                    "OVRS_EXCG_CD": excg,
-                    "WCRC_FRCR_DVSN_CD": "02",
-                    "NATN_CD": "840",
-                    "TR_MKET_CD": "01",
-                    "INQR_DVSN": "00",
-                }
-                resp = _req.get(
-                    f"{cfg.base_url}{path}",
-                    headers=broker._inquire_headers(tr),
-                    params=params,
-                    timeout=8,
-                )
-                body = resp.json() if resp.status_code == 200 else {}
-            except Exception:
-                continue
+                pnl_pct = float(raw.get("evlu_pfls_rt") or 0)
+            except (TypeError, ValueError):
+                pnl_pct = 0.0
+            if not pnl_pct and avg > 0 and cur > 0:
+                pnl_pct = round((cur / avg - 1.0) * 100.0, 2)
+            exch, _, tick = str(p.symbol).partition(":")
+            all_positions.append({
+                "symbol":        tick or p.symbol,
+                "exchange":      exch or raw.get("exchange") or "",
+                "name":          str(raw.get("ovrs_item_name") or raw.get("prdt_name") or tick or p.symbol),
+                "quantity":      qty,
+                "avg_price_usd": avg,
+                "cur_price_usd": cur,
+                "value_usd":     val,
+                "value_krw":     round(val * usd_rate, 0),
+                "pnl_usd":       pnl_usd,
+                "pnl_krw":       round(pnl_usd * usd_rate, 0),
+                "pnl_pct":       pnl_pct,
+            })
+            total_usd_value += val
+            total_usd_pnl += pnl_usd
 
-            if str(body.get("rt_cd", "")).strip() != "0":
-                continue
-
-            # output1: 보유 종목 목록
-            out1 = body.get("output1") or []
-            if not isinstance(out1, list):
-                out1 = []
-
-            for row in out1:
-                sym = str(row.get("ovrs_pdno") or "").strip()
-                if not sym or sym in seen_symbols:
-                    continue
-                qty = float(row.get("ovrs_cblc_qty") or 0)
-                if qty <= 0:
-                    continue
-                seen_symbols.add(sym)
-
-                avg_price  = float(row.get("pchs_avg_pric") or 0)
-                cur_price  = float(row.get("now_pric2") or 0)
-                evlu_amt   = float(row.get("frcr_evlu_pfls_amt") or 0)  # USD 평가손익
-                evlu_value = float(row.get("ovrs_stck_evlu_amt") or 0) or round(cur_price * qty, 2)
-                pnl_pct    = float(row.get("evlu_pfls_rt") or 0)
-                row_excg   = str(row.get("ovrs_excg_cd") or excg).strip() or excg
-
-                # 원화 환산
-                evlu_krw  = round(evlu_value * usd_rate, 0)
-                pnl_krw   = round(evlu_amt * usd_rate, 0)
-                avg_krw   = round(avg_price * usd_rate, 0)
-
-                total_usd_value += evlu_value
-                total_usd_pnl   += evlu_amt
-
-                all_positions.append({
-                    "symbol":         sym,
-                    "exchange":       row_excg,
-                    "name":           str(row.get("ovrs_item_name") or sym),
-                    "quantity":       qty,
-                    "avg_price":      avg_price,
-                    "avg_price_krw":  avg_krw,
-                    "current_price":  cur_price,
-                    "market_value":   evlu_value,
-                    "market_value_krw": evlu_krw,
-                    "pnl_usd":        evlu_amt,
-                    "pnl_krw":        pnl_krw,
-                    "pnl_pct":        pnl_pct,
-                })
-
-            # output2: 계좌 요약 (첫 조회에서만 집계)
-            if not cash_usd:
-                out2 = body.get("output2") or [{}]
-                if isinstance(out2, list) and out2:
-                    s = out2[0]
-                    try:
-                        cash_usd = float(s.get("frcr_dncl_amt_2") or 0)
-                        # 환율 업데이트
-                        r = float(s.get("frst_bltn_exrt") or 0)
-                        if r > 0:
-                            usd_rate = r
-                    except Exception:
-                        pass
+        # 매수가능 USD (통합증거금 환산 포함)
+        cash_usd = 0.0
+        try:
+            _b = broker.get_overseas_buyable_usd()
+            cash_usd = float(_b or 0)
+        except Exception:
+            pass
 
         return {
             "exists":               True,
