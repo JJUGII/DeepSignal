@@ -1312,8 +1312,11 @@ def cmd_crypto_retrain_lgbm(args: argparse.Namespace) -> int:
     )
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     print(result.reason)
+    # "샘플 부족"은 에러가 아니라 정상 no-op(아직 체결 데이터 미달) — 종료코드 0.
+    # 1을 반환하면 launchd가 매일 경고로 표시(허위 알람). 진짜 예외만 main()이 1로.
     if "insufficient" in result.reason:
-        return 1
+        print(f"[정상 스킵] 재학습 보류 — 체결 샘플 부족. 기존 모델 유지. ({result.reason})")
+        return 0
     return 0
 
 
