@@ -203,6 +203,14 @@ def notify_inactive_kis_execution(
     inactive_cfg: OperatorInactiveConfig | None = None,
 ) -> dict[str, Any]:
     """Telegram: execution result only (no approval buttons)."""
+    # 양성(benign) 무알림 조건: '매수가능현금 0/현금부족' 등 정상적 스킵은 실패가 아니라
+    # 알릴 필요 없는 상태(주말 스킵과 동일). 거부 스팸이 아니라 그냥 살 게 없는 것.
+    _benign = ("INSUFFICIENT_BUYABLE_CASH", "매수가능수량 0", "현금부족", "INACTIVE_AUTO_SKIPPED")
+    _exr = getattr(execution, "execution_result", None) or {}
+    _status = str(getattr(execution, "status", "") or "") + " " + str(_exr.get("status") or "")
+    _errtext = " ".join(getattr(execution, "errors", None) or []) + " " + " ".join(_exr.get("errors") or [])
+    if not getattr(execution, "success", False) and any(k in _status or k in _errtext for k in _benign):
+        return {"ok": True, "status": "suppressed_benign_no_buy"}
     # 반복 실패 알림 억제: 동일 실패 사유가 쿨다운(기본 60분) 내 반복되면 발송 생략.
     # 같은 주문이 5분마다 같은 이유로 거부될 때 텔레그램 도배 방지(체결 성공은 항상 발송).
     if not getattr(execution, "success", False):
