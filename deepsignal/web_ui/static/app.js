@@ -728,6 +728,7 @@ let dashAnalyzing = false;
 // ── 수익률 기간별 섹션 ──────────────────────────
 
 let _returnsPeriod = '1m';
+let _todayReturns = null;  // '오늘 거래' 카드 전용 1d 실현손익 (기간 선택과 무관)
 let _returnsCache  = {};
 // 현재 보유분 평가손익(미실현) — 기간 무관, status에서 세팅
 let _holdingPnl = { coin: {pct: null, count: 0}, stock: {pct: null, count: 0} };
@@ -1428,7 +1429,11 @@ function buildKpiStrip(d, holdings, stockHoldings, totalAsset, returnsData = nul
   const todayBuy = Number(r.buy_krw_today || 0);
   const todaySell = Number(r.sell_krw_today || 0);
   const todayNet = todaySell - todayBuy;
-  const realizedToday = returnsData?.combined?.total_realized_krw ?? null;
+  // '오늘 거래' 카드는 반드시 오늘(1d) 실현손익을 쓴다(매수/매도도 오늘 기준).
+  // 과거엔 기간 선택값(_returnsPeriod, 기본 월간)을 써서 "오늘" 라벨에 월간 손익이
+  // 표시되며 매수>매도인데 +로 보이는 모순이 있었다.
+  const _todayComb = _todayReturns?.combined ?? null;
+  const realizedToday = _todayComb?.total_realized_krw ?? null;
 
   const totalHist  = _kpiHistoryPush('total',  totalAsset);
   const coinHist   = _kpiHistoryPush('coin',   coinPnlPct ?? 0);
@@ -1474,7 +1479,7 @@ function buildKpiStrip(d, holdings, stockHoldings, totalAsset, returnsData = nul
     <section class="summary-panel">
       <div class="summary-panel-title">오늘 거래</div>
       <div class="summary-big ${realizedToday != null ? krwCls(realizedToday) : ''}">${realizedToday != null ? signedKrw(realizedToday) : '-'}</div>
-      <div class="summary-muted">실현손익 ${returnsData?.combined ? `· ${returnsData.combined.trade_count || 0}건 · 승률 ${(returnsData.combined.win_rate || 0).toFixed(1)}%` : ''}</div>
+      <div class="summary-muted">실현손익 ${_todayComb ? `· ${_todayComb.trade_count || 0}건 · 승률 ${(_todayComb.win_rate || 0).toFixed(1)}%` : ''}</div>
       <div class="summary-metric-row"><span>매수</span><strong class="text-up">${fmt_krw(Math.round(todayBuy))}</strong></div>
       <div class="summary-metric-row"><span>매도</span><strong class="text-down">${fmt_krw(Math.round(todaySell))}</strong></div>
       <div class="summary-metric-row"><span>순현금</span><strong class="${todayNet > 0 ? 'text-up' : todayNet < 0 ? 'text-down' : ''}">${signedKrw(todayNet)}</strong></div>
@@ -1661,7 +1666,7 @@ async function loadDashboard() {
   // 한글 코인명 로드 (최초 1회, 이후 캐시)
   loadCoinNames();
 
-  const [d, approval, kpos, kimchi, scoresRes, returnsData, openOrders, orderFailures, ospos] = await Promise.all([
+  const [d, approval, kpos, kimchi, scoresRes, returnsData, openOrders, orderFailures, ospos, todayReturns] = await Promise.all([
     GET('/api/status'),
     GET('/api/approval').catch(() => ({ crypto: {}, stock: {} })),
     GET('/api/kstock/positions').catch(() => ({ exists: false, positions: [] })),
@@ -1671,7 +1676,9 @@ async function loadDashboard() {
     GET('/api/orders/open?market=all').catch(() => ({ items: [] })),
     GET('/api/orders/failures?limit=5').catch(() => ({ items: [] })),
     GET('/api/overseas/positions').catch(() => ({ exists: false, positions: [] })),
+    GET('/api/stats/returns?period=1d').catch(() => null),  // '오늘 거래' 카드 전용(라벨=오늘)
   ]);
+  _todayReturns = todayReturns;
   // 수익률 캐시 갱신
   if (returnsData) _returnsCache[_returnsPeriod] = { ts: Date.now(), data: returnsData };
   const openOrderSection = buildOpenOrders(openOrders);
