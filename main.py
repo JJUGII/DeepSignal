@@ -604,6 +604,52 @@ def cmd_crypto_daily_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_crypto_listing_scan(args: argparse.Namespace) -> int:
+    """[코인] 업비트·빗썸 상장 차이·이상 움직임 감시 (조회·알림 전용, 자동매수 없음)."""
+    import json
+
+    from deepsignal.crypto_trading.listing.config import ListingWatchConfig
+    from deepsignal.crypto_trading.listing.scanner import run_listing_scan
+
+    out_dir = str(getattr(args, "output_dir", "outputs") or "outputs")
+    use_network = bool(getattr(args, "network", False))
+    send_alerts = not bool(getattr(args, "no_alert", False))
+    cfg = ListingWatchConfig.from_env()
+    try:
+        result = run_listing_scan(
+            out_dir,
+            cfg=cfg,
+            network=use_network,
+            send_alerts=send_alerts and use_network,
+        )
+    except Exception as exc:
+        print(f"crypto-listing-scan failed: {exc}", flush=True)
+        return 1
+
+    print(
+        f"crypto-listing-scan: bithumb_only={result.bithumb_only_count} "
+        f"upbit_only={result.upbit_only_count} candidates={len(result.candidates)}",
+        flush=True,
+    )
+    if result.new_on_bithumb:
+        print(f"  new on bithumb: {', '.join(result.new_on_bithumb[:10])}", flush=True)
+    if result.new_on_upbit:
+        print(f"  new on upbit: {', '.join(result.new_on_upbit[:10])}", flush=True)
+    if result.alerts_sent:
+        print(f"  telegram alerts: {', '.join(result.alerts_sent)}", flush=True)
+    top = result.candidates[:5]
+    for c in top:
+        vol = f"{c.vol_ratio:.1f}x" if c.vol_ratio is not None else "-"
+        print(
+            f"  [{c.anomaly_score:.0f}] {c.market} 24h={c.signed_change_rate:+.1f}% vol={vol} "
+            f"tags={','.join(c.tags) or '-'}",
+            flush=True,
+        )
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_crypto_telegram_approval(args: argparse.Namespace) -> int:
     """[실전-코인-01] Telegram 승인 요청·(선택) 폴링·승인 시 주문."""
     import json
@@ -4847,6 +4893,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="추천 없을 때 BUY/SELL 진단 JSON 전체 출력",
     )
 
+    p_crypto_listing = sub.add_parser(
+        "crypto-listing-scan",
+        help="[코인] 업비트·빗썸 상장 차이·이상 움직임 감시 (조회·알림 전용)",
+    )
+    p_crypto_listing.add_argument("--output-dir", type=str, default="outputs", metavar="DIR")
+    p_crypto_listing.add_argument("--network", action="store_true", help="실 API 조회")
+    p_crypto_listing.add_argument("--no-alert", action="store_true", help="텔레그램 알림 생략")
+    p_crypto_listing.add_argument("--json", action="store_true", help="전체 JSON 출력")
+
     p_crypto_tg = sub.add_parser("crypto-telegram-approval", help="[실전-코인-01] Telegram 승인 요청")
     p_crypto_tg.add_argument("--broker", type=str, default="upbit", choices=["upbit", "bithumb"])
     p_crypto_tg.add_argument("--output-dir", type=str, default="outputs", metavar="DIR")
@@ -6130,6 +6185,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_crypto_check(args)
     elif args.command == "crypto-daily-plan":
         return cmd_crypto_daily_plan(args)
+    elif args.command == "crypto-listing-scan":
+        return cmd_crypto_listing_scan(args)
     elif args.command == "crypto-telegram-approval":
         return cmd_crypto_telegram_approval(args)
     elif args.command == "crypto-paper-status":

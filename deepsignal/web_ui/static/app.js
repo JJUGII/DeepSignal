@@ -653,7 +653,7 @@ function syncBottomNav(page) {
 }
 
 // ── 라우터 ───────────────────────────────────
-const PAGES = ['dashboard', 'runner', 'settings', 'logs', 'analysis', 'trades', 'charts', 'reports'];
+const PAGES = ['dashboard', 'runner', 'settings', 'logs', 'analysis', 'listing', 'trades', 'charts', 'reports'];
 let currentPage = 'dashboard';
 
 function navigate(page) {
@@ -691,6 +691,7 @@ function navigate(page) {
   }
   if (page === 'logs')      renderLogs();
   if (page === 'analysis')  renderAnalysis();
+  if (page === 'listing')   renderListing();
   if (page === 'trades')    renderTrades();
   if (page === 'charts')    renderCharts();
   if (page === 'reports')   renderReports();
@@ -5170,6 +5171,124 @@ async function renderTrades() {
   setTimeout(() => _tpLoad(active), 0);
 }
 
+// ══════════════════════════════════════════════
+// 상장 감시 (조회·알림 전용)
+// ══════════════════════════════════════════════
+let listingInterval = null;
+let listingRefreshing = false;
+
+async function renderListing() {
+  clearInterval(listingInterval);
+  const el = document.getElementById('page-listing');
+  el.innerHTML = '<div class="page-header"><h1 class="page-title">상장 감시</h1></div><div class="text-muted">데이터 로딩 중...</div>';
+  await loadListing(false);
+  listingInterval = setInterval(() => loadListing(false), 60000);
+}
+
+function _listingSideLabel(side) {
+  if (side === 'bithumb_only') return '<span class="badge badge-warn">빗썸만</span>';
+  if (side === 'upbit_only') return '<span class="badge badge-info">업비트만</span>';
+  return escHtml(side || '-');
+}
+
+function _listingScoreClass(score) {
+  if (score >= 75) return 'color:var(--danger);font-weight:600';
+  if (score >= 55) return 'color:var(--warning);font-weight:600';
+  return '';
+}
+
+async function loadListing(forceRefresh) {
+  if (currentPage !== 'listing') { clearInterval(listingInterval); return; }
+  const el = document.getElementById('page-listing');
+  if (!el) return;
+
+  if (forceRefresh && listingRefreshing) return;
+  if (forceRefresh) listingRefreshing = true;
+
+  let data;
+  try {
+    const url = forceRefresh ? '/api/listing-watch?refresh=true' : '/api/listing-watch';
+    data = await GET(url);
+  } catch (e) {
+    el.innerHTML = `<div class="page-header"><h1 class="page-title">상장 감시</h1></div>
+      <div class="section-box" style="color:var(--danger)">조회 실패: ${escHtml(e.message)}</div>`;
+    listingRefreshing = false;
+    return;
+  }
+  listingRefreshing = false;
+
+  const candidates = data.candidates || [];
+  const highCount = candidates.filter(c => (c.anomaly_score || 0) >= 65).length;
+  const newBi = (data.new_on_bithumb || []).length;
+  const newUp = (data.new_on_upbit || []).length;
+  const srcLabel = data.source === 'live' ? '실시간' : (data.source === 'cache' ? '캐시' : '-');
+  const genAt = data.generated_at ? fmt_time(data.generated_at) : '-';
+
+  const statGrid = `<div class="stat-grid" style="margin-bottom:12px">
+    <div class="stat-card"><div class="stat-label">빗썸만</div><div class="stat-value">${data.bithumb_only_count ?? '-'}</div></div>
+    <div class="stat-card"><div class="stat-label">업비트만</div><div class="stat-value">${data.upbit_only_count ?? '-'}</div></div>
+    <div class="stat-card"><div class="stat-label">신규(빗썸)</div><div class="stat-value">${newBi}</div></div>
+    <div class="stat-card"><div class="stat-label">고점수</div><div class="stat-value" style="color:var(--warning)">${highCount}</div></div>
+  </div>`;
+
+  const rows = candidates.length === 0
+    ? '<tr><td colspan="9" class="text-muted" style="text-align:center;padding:20px">조건에 맞는 후보 없음</td></tr>'
+    : candidates.map(c => {
+        const tags = (c.tags || []).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join(' ');
+        const vol = c.vol_ratio != null ? `${Number(c.vol_ratio).toFixed(1)}x` : '-';
+        const chg1h = c.chg_1h_pct != null ? `${Number(c.chg_1h_pct) >= 0 ? '+' : ''}${Number(c.chg_1h_pct).toFixed(1)}%` : '-';
+        const chg24 = `${Number(c.signed_change_rate || 0) >= 0 ? '+' : ''}${Number(c.signed_change_rate || 0).toFixed(1)}%`;
+        const acc = Number(c.acc_trade_price_24h || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+        const newBadge = c.is_new ? ' <span class="badge badge-new">NEW</span>' : '';
+        return `<tr>
+          <td style="${_listingScoreClass(c.anomaly_score || 0)}">${Math.round(c.anomaly_score || 0)}</td>
+          <td>${escHtml(c.display_name || c.market || '')}${newBadge}</td>
+          <td>${_listingSideLabel(c.exchange_side)}</td>
+          <td style="text-align:right">${chg24}</td>
+          <td style="text-align:right">${chg1h}</td>
+          <td style="text-align:right">${vol}</td>
+          <td style="text-align:right;font-size:11px">${acc}</td>
+          <td style="font-size:11px">${tags || '-'}</td>
+          <td><a href="#charts" class="btn btn-ghost btn-sm" onclick="event.preventDefault();navigate('charts')">차트</a></td>
+        </tr>`;
+      }).join('');
+
+  const newLists = [
+    newBi ? `<div class="text-muted" style="font-size:12px;margin-top:8px"><b>빗썸 신규</b>: ${(data.new_on_bithumb || []).slice(0, 20).map(escHtml).join(', ')}</div>` : '',
+    newUp ? `<div class="text-muted" style="font-size:12px;margin-top:4px"><b>업비트 신규</b>: ${(data.new_on_upbit || []).slice(0, 20).map(escHtml).join(', ')}</div>` : '',
+  ].join('');
+
+  el.innerHTML = `
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+      <div>
+        <h1 class="page-title">상장 감시</h1>
+        <div class="page-subtitle">업비트·빗썸 마켓 차이 · 수상한 움직임 · <b>조회·알림 전용</b> (자동매수 없음)</div>
+      </div>
+      <button class="btn btn-primary btn-sm" id="listing-refresh-btn" ${listingRefreshing ? 'disabled' : ''}>↺ 새로고침</button>
+    </div>
+    <div class="section-box" style="margin-bottom:12px;border-left:3px solid var(--warning)">
+      <div style="font-size:12px;color:var(--text-muted)">${escHtml(data.disclaimer || '조회·알림 전용입니다. 자동 매수 없음.')}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">갱신: ${genAt} · 출처: ${srcLabel} · 후보 ${candidates.length}건</div>
+      ${newLists}
+    </div>
+    ${statGrid}
+    <div class="section-box">
+      <div class="section-title-row"><span class="section-title">이상 움직임 후보</span></div>
+      <div class="table-wrap" style="overflow-x:auto">
+        <table class="data-table" style="width:100%;font-size:12px">
+          <thead><tr>
+            <th>점수</th><th>종목</th><th>구분</th><th>24h</th><th>1h</th><th>거래량비</th><th>24h거래대금</th><th>태그</th><th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const btn = document.getElementById('listing-refresh-btn');
+  if (btn) btn.addEventListener('click', () => loadListing(true));
+}
+
 async function renderReports() {
   const el = document.getElementById('page-reports');
   el.innerHTML = '<div class="page-header"><h1 class="page-title">리포트</h1></div><div class="text-muted">목록 로딩 중...</div>';
@@ -5447,6 +5566,14 @@ function handleRealtimeEvent(msg) {
       if (!data._deleted && data.market) {
         toast(`새 신호: ${data.market} (${data.side || '매수'} 검토 중)`, 'info', 6000);
         if (currentPage === 'analysis') loadAnalysis();
+      }
+      break;
+
+    case 'listing_watch':
+      if (!data._deleted && currentPage === 'listing') loadListing(false);
+      else if (!data._deleted && (data.candidates || []).some(c => (c.anomaly_score || 0) >= 75)) {
+        const top = (data.candidates || [])[0];
+        if (top) toast(`상장감시: ${top.display_name || top.market} 점수 ${Math.round(top.anomaly_score)}`, 'warning', 8000);
       }
       break;
   }
