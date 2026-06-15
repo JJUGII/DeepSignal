@@ -176,17 +176,27 @@ def _broker_has_trading(broker: Any) -> bool:
 
 
 def _serialize_crypto_holdings(holdings: Any) -> list[dict[str, Any]]:
-    return [
-        {
+    # 먼지(dust) 숨김 — 평가금액이 기준 미만인 잔량(매도 불가한 1e-6개 등)은 표시 제외.
+    # 기본 1,000원. env CRYPTO_DUST_HIDE_KRW 로 조정(예: 10000=거래소 최소주문액 미만 전부 숨김).
+    import os as _os
+    try:
+        _dust_krw = float(_os.getenv("CRYPTO_DUST_HIDE_KRW", "1000") or 1000)
+    except ValueError:
+        _dust_krw = 1000.0
+    out: list[dict[str, Any]] = []
+    for h in holdings:
+        _val = float(h.valuation_krw or 0)
+        if _val < _dust_krw:
+            continue  # 먼지 — 화면에서 숨김 (거래 로직과는 무관, 표시 전용)
+        out.append({
             "market": h.market,
             "quantity": round(float(h.total_quantity), 6),
             "avg_buy_price": round(float(h.avg_buy_price or 0), 2),
             "current_price": round(float(h.current_price or 0), 2),
             "pnl_pct": round(float(h.pnl_pct or 0), 2),
-            "valuation_krw": round(float(h.valuation_krw or 0), 0),
-        }
-        for h in holdings
-    ]
+            "valuation_krw": round(_val, 0),
+        })
+    return out
 
 
 def _balance_from_broker(broker: Any) -> dict[str, float]:

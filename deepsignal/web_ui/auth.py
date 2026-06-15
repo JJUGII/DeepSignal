@@ -97,11 +97,22 @@ def verify_session_token(token: str, bot_token: str) -> int | None:
 # 환경변수 헬퍼
 # ──────────────────────────────────────────
 
+def _safe_int_env(name: str, default: int) -> int:
+    """env 정수 파싱 — 비정상값(설정 마스킹 '••••••••5026' 등)이 들어와도 전 웹을
+    500내지 않게 방어. 파싱 실패 시 default. (auth_middleware가 매 요청 호출하므로
+    chat_id 하나 깨지면 사이트 전체가 다운되던 문제 차단.)"""
+    raw = os.getenv(name, "") or ""
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def get_auth_config() -> dict:
     return {
         "bot_token":    os.getenv("DEEPSIGNAL_NOTIFY_TELEGRAM_BOT_TOKEN", "").strip(),
-        "allowed_id":   int(os.getenv("DEEPSIGNAL_NOTIFY_TELEGRAM_CHAT_ID", "0") or 0),
+        "allowed_id":   _safe_int_env("DEEPSIGNAL_NOTIFY_TELEGRAM_CHAT_ID", 0),
         "require_auth": os.getenv("DEEPSIGNAL_WEBUI_REQUIRE_AUTH", "false").lower() == "true",
-        "session_hours": int(os.getenv("DEEPSIGNAL_WEBUI_SESSION_HOURS", "24") or 24),
+        "session_hours": _safe_int_env("DEEPSIGNAL_WEBUI_SESSION_HOURS", 24),
         "public_url":   os.getenv("DEEPSIGNAL_WEBUI_PUBLIC_URL", "").strip(),
     }
