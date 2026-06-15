@@ -7,26 +7,42 @@ from deepsignal.crypto_trading.upbit_broker import CryptoHolding
 
 
 def round_crypto_limit_price(price: float) -> float:
-    """Upbit KRW 호가단위 반올림 (2023.10 개편 — 1,000원 미만 세분화 반영).
+    """Upbit KRW 호가단위 격자로 스냅. 안 맞으면 invalid_price_ask로 거부된다.
 
-    구버전 테이블은 100~1,000원 구간을 1원 단위로 깎아 저가 알트에서
-    최대 ~1% 가격 오차(매수 미체결·매도 헐값)를 만들었다.
-    1,000원 이상 구간은 기존(실거래 검증됨) 유지.
+    버그(실측): 1,000원 이상을 1원 단위로 반올림 → 10만~50만원대(호가 100원)
+    AAVE 112,737 등이 무효가격으로 거부되어 매도가 안 됨. 정식 테이블로 교정.
+    각 구간 tick은 실제 tick의 배수(coarser)라도 항상 유효하므로 보수적으로 잡음.
     """
     px = float(price)
     if px <= 0:
         return 0.0
     if px >= 1_000_000:
-        return float(int(round(px / 1000.0)) * 1000)
-    if px >= 1_000:
-        return float(int(round(px)))                   # 1k~1M: 1원
-    if px >= 100:
-        return round(round(px * 10.0) / 10.0, 1)       # 100~1k: 0.1원
-    if px >= 10:
-        return round(round(px * 100.0) / 100.0, 2)     # 10~100: 0.01원
-    if px >= 1:
-        return round(round(px * 1000.0) / 1000.0, 3)   # 1~10: 0.001원
-    return round(round(px * 10000.0) / 10000.0, 4)     # <1: 0.0001원
+        tick = 1000.0
+    elif px >= 500_000:
+        tick = 500.0
+    elif px >= 100_000:
+        tick = 100.0
+    elif px >= 50_000:
+        tick = 50.0
+    elif px >= 10_000:
+        tick = 10.0
+    elif px >= 1_000:
+        tick = 5.0
+    elif px >= 100:
+        tick = 1.0
+    elif px >= 10:
+        tick = 0.1
+    elif px >= 1:
+        tick = 0.01
+    elif px >= 0.1:
+        tick = 0.001
+    else:
+        tick = 0.0001
+    snapped = round(px / tick) * tick
+    # 부동소수 잔차 제거 (tick 소수자릿수에 맞춰 반올림)
+    import math as _m
+    decimals = max(0, -int(_m.floor(_m.log10(tick)))) if tick < 1 else 0
+    return round(snapped, decimals)
 
 
 def compute_sell_limit_price(
