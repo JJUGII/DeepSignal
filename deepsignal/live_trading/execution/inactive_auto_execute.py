@@ -203,6 +203,36 @@ def notify_inactive_kis_execution(
     inactive_cfg: OperatorInactiveConfig | None = None,
 ) -> dict[str, Any]:
     """Telegram: execution result only (no approval buttons)."""
+    # 반복 실패 알림 억제: 동일 실패 사유가 쿨다운(기본 60분) 내 반복되면 발송 생략.
+    # 같은 주문이 5분마다 같은 이유로 거부될 때 텔레그램 도배 방지(체결 성공은 항상 발송).
+    if not getattr(execution, "success", False):
+        try:
+            import hashlib
+            import os as _os
+            import time as _t
+            from pathlib import Path as _P
+            sig_src = f"{getattr(execution,'status','')}|{'|'.join(getattr(execution,'errors',None) or [])}"
+            sig = hashlib.md5(sig_src.encode("utf-8")).hexdigest()[:12]
+            try:
+                cooldown = float(_os.environ.get("KIS_FAIL_ALERT_COOLDOWN_MIN", "60") or 60) * 60
+            except ValueError:
+                cooldown = 3600.0
+            sp = _P(str(getattr(tg_config, "output_dir", "outputs") or "outputs")) / "KSTOCK_FAIL_ALERT_DEDUP.json"
+            now = _t.time()
+            seen: dict[str, float] = {}
+            if sp.exists():
+                import json as _j
+                seen = _j.loads(sp.read_text(encoding="utf-8")) or {}
+            last = float(seen.get(sig) or 0)
+            if now - last < cooldown:
+                return {"ok": True, "status": "suppressed_duplicate_failure", "sig": sig}
+            seen[sig] = now
+            seen = {k: v for k, v in seen.items() if now - float(v) < 86400}  # 24h 이상 정리
+            import json as _j
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            sp.write_text(_j.dumps(seen, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
     plan_ctx = load_plan_order_context(plan_path)
     body = format_operator_execution_result_text(execution=execution, plan_context=plan_ctx)
     text = format_kis_stock_execution_preamble(inactive_cfg=inactive_cfg) + body

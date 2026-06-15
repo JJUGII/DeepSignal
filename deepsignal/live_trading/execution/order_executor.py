@@ -398,17 +398,44 @@ def execute_live_order_plan(
         if pd_warns:
             base.setdefault("price_warnings", []).extend(pd_warns)
         if not pd_ok:
-            base["blocked_reason"] = "; ".join(pd_errs)
-            base.update(
-                {
-                    "success": False,
-                    "status": "LIVE_ORDER_BLOCKED_PRICE_DIVERGENCE",
-                    "errors": pd_errs,
-                    "results": [],
-                    "plan_warnings": list(plan.warnings),
-                }
-            )
-            return base
+            # 괴리 차단 대신 실시간가로 재가격(자동 매수 경로) — 낡은 지정가로 인한
+            # 반복 차단·알림 스팸의 근본 원인. 실시간 호가가 있는 BUY는 현재가+버퍼로
+            # 재산정해 진행(호가단위 스냅은 broker.place_order가 처리). 호가 자체가
+            # 없어 막힌 건은 재가격 불가 → 그대로 차단.
+            import os as _os
+            from dataclasses import replace as _dc_replace
+            _reprice_on = _os.environ.get("KIS_AUTO_REPRICE_ON_DIVERGENCE", "true").strip().lower() in ("1", "true", "yes", "on")
+            try:
+                _buf = float(_os.environ.get("KIS_REPRICE_BUFFER_PCT", "0.4") or 0.4)
+            except ValueError:
+                _buf = 0.4
+            repriced: list[BrokerOrderRequest] = []
+            unfixable: list[str] = []
+            if _reprice_on:
+                for r in to_send:
+                    q = pd_quotes.get(str(r.symbol))
+                    if str(r.side).upper() == "BUY" and q and float(q) > 0:
+                        new_px = float(q) * (1.0 + max(0.0, _buf) / 100.0)
+                        repriced.append(_dc_replace(
+                            r, limit_price=new_px, estimated_value=new_px * int(r.quantity)))
+                    else:
+                        unfixable.append(str(r.symbol))
+            if _reprice_on and repriced and not unfixable:
+                base.setdefault("price_warnings", []).append(
+                    "괴리 자동 재가격(실시간가 기준): " + "; ".join(pd_errs))
+                to_send = repriced  # 이하 전송 로직이 재가격된 주문을 사용
+            else:
+                base["blocked_reason"] = "; ".join(pd_errs)
+                base.update(
+                    {
+                        "success": False,
+                        "status": "LIVE_ORDER_BLOCKED_PRICE_DIVERGENCE",
+                        "errors": pd_errs,
+                        "results": [],
+                        "plan_warnings": list(plan.warnings),
+                    }
+                )
+                return base
 
         base["actual_order_attempted"] = False
         live_broker = KISBroker(cfg, safe_mode=False, session=broker._session)
