@@ -4073,8 +4073,13 @@ def _build_plan_detail(req_type: str) -> dict | None:
             for o in (d.get("orders") or []):
                 amt = float(o.get("estimated_order_value") or 0)
                 total += amt
+                _sym = o.get("symbol")
+                try:
+                    _nm = _get_stock_name(str(_sym)) if _sym else _sym
+                except Exception:
+                    _nm = _sym
                 orders.append({
-                    "symbol": o.get("symbol"), "name": o.get("symbol"),
+                    "symbol": _sym, "name": _nm or _sym,
                     "side": "매수" if str(o.get("side", "BUY")).upper() == "BUY" else "매도",
                     "qty": o.get("estimated_qty"),
                     "price": o.get("estimated_price"), "price_unit": "₩",

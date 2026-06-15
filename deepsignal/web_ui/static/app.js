@@ -1409,11 +1409,18 @@ function buildKpiStrip(d, holdings, stockHoldings, totalAsset, returnsData = nul
   const krwTotal = d.balance_krw_total ?? d.balance_krw ?? 0;
   const stockCash = d.stock_balance_krw || 0;
   const availableCash = krwTotal + stockCash;
-  const coinCost = holdings.reduce((s, h) => s + (Number(h.avg_buy_price || 0) * Number(h.quantity || 0)), 0);
-  const stockCost = stockHoldings.reduce((s, h) => s + (Number(h.avg_price || 0) * Number(h.quantity || 0)), 0);
+  // 먼지(dust) 잔량 제외: 매도 후 안 떨어진 1e-6개 등은 매입원가만 남아 -100% 왜곡.
+  // 평가액 1,000원 미만 보유는 손익 계산에서 제외(표시 자산엔 영향 없음).
+  const _DUST_KRW = 1000;
+  const coinHoldReal = holdings.filter(h => (Number(h.valuation_krw ?? h.market_value ?? 0)) >= _DUST_KRW);
+  const stockHoldReal = stockHoldings.filter(h => (Number(h.market_value ?? 0)) >= _DUST_KRW);
+  const coinValReal = coinHoldReal.reduce((s, h) => s + (Number(h.valuation_krw ?? h.market_value ?? 0)), 0);
+  const stockValReal = stockHoldReal.reduce((s, h) => s + (Number(h.market_value || 0)), 0);
+  const coinCost = coinHoldReal.reduce((s, h) => s + (Number(h.avg_buy_price || 0) * Number(h.quantity || 0)), 0);
+  const stockCost = stockHoldReal.reduce((s, h) => s + (Number(h.avg_price || 0) * Number(h.quantity || 0)), 0);
   const investedCost = coinCost + stockCost;
-  const unrealizedPnl = (coinVal + stockVal) - investedCost;
-  const unrealizedPnlPct = investedCost > 0 ? unrealizedPnl / investedCost * 100 : null;
+  const unrealizedPnl = (coinValReal + stockValReal) - investedCost;
+  const unrealizedPnlPct = investedCost >= _DUST_KRW ? unrealizedPnl / investedCost * 100 : null;
   const coinPnlPct  = holdings.length
     ? holdings.reduce((s, h) => s + (h.pnl_pct || 0), 0) / holdings.length : null;
   const stockPnlPct = stockHoldings.length
