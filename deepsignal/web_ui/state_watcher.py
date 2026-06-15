@@ -19,6 +19,7 @@ _WATCH_MAP: dict[str, str] = {
     "crypto_telegram_approval_request.json":    "crypto_approval_request",
     "TELEGRAM_APPROVAL_STATE.json":             "stock_approval_update",
     "WEBUI_RUNNER_PID.json":                    "runner_pid",
+    "LISTING_WATCH_LATEST.json":                "listing_watch",
 }
 
 _POLL_INTERVAL = 1.0  # seconds

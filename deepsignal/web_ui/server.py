@@ -43,16 +43,19 @@ _STATIC = _HERE / "static"
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    from deepsignal.web_ui.listing_watch_loop import listing_watch_loop
     from deepsignal.web_ui.state_watcher import watch_loop
     task = asyncio.create_task(watch_loop(_OUTPUT_DIR, _event_bus))
+    listing_task = asyncio.create_task(listing_watch_loop(_OUTPUT_DIR, _event_bus))
     try:
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for t in (task, listing_task):
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="DeepSignal Web UI", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -1134,6 +1137,76 @@ async def api_approval_action(req: ApprovalActionRequest) -> JSONResponse:
 @app.get("/api/plan/detail")
 async def api_plan_detail() -> JSONResponse:
     return JSONResponse(_read_json(_OUTPUT_DIR / "CRYPTO_ORDER_PLAN.json"))
+
+
+_listing_scan_lock = asyncio.Lock()
+
+
+@app.get("/api/listing-watch")
+async def api_listing_watch(refresh: bool = False) -> JSONResponse:
+    """Cross-exchange listing watch (read-only). Cached JSON unless refresh=true."""
+    from deepsignal.crypto_trading.listing.config import ListingWatchConfig
+    from deepsignal.crypto_trading.listing.scanner import load_listing_watch_latest, run_listing_scan
+
+    cfg = ListingWatchConfig.from_env()
+    cached = load_listing_watch_latest(_OUTPUT_DIR)
+    if refresh and cfg.enabled:
+        async with _listing_scan_lock:
+            try:
+                result = await asyncio.to_thread(
+                    run_listing_scan,
+                    _OUTPUT_DIR,
+                    cfg=cfg,
+                    network=True,
+                    send_alerts=False,
+                )
+                payload = result.to_dict()
+                payload["source"] = "live"
+                return JSONResponse(payload)
+            except Exception as exc:
+                if cached:
+                    cached = dict(cached)
+                    cached["scan_error"] = str(exc)
+                    cached["source"] = "cache"
+                    return JSONResponse(cached)
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if cached:
+        cached = dict(cached)
+        cached["source"] = "cache"
+        cached["enabled"] = cfg.enabled
+        return JSONResponse(cached)
+
+    if not cfg.enabled:
+        return JSONResponse(
+            {
+                "enabled": False,
+                "source": "empty",
+                "candidates": [],
+                "disclaimer": "조회·알림 전용입니다. 자동 매수 없음.",
+            }
+        )
+
+    async with _listing_scan_lock:
+        try:
+            result = await asyncio.to_thread(
+                run_listing_scan,
+                _OUTPUT_DIR,
+                cfg=cfg,
+                network=True,
+                send_alerts=False,
+            )
+            payload = result.to_dict()
+            payload["source"] = "live"
+            payload["enabled"] = True
+            return JSONResponse(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/listing-watch/refresh")
+async def api_listing_watch_refresh() -> JSONResponse:
+    return await api_listing_watch(refresh=True)
 
 
 @app.get("/api/sizing")
