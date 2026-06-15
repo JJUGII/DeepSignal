@@ -3812,49 +3812,78 @@ def _empty_returns_stat() -> dict:
             "trade_count": 0, "win_count": 0, "win_rate": 0.0}
 
 
-def _compute_crypto_returns_stats(date_from: str, date_to: str) -> dict:
-    """crypto_trades DB에서 기간 내 실현 수익률 집계.
+def _crypto_realized_fifo(fills: list[dict]) -> dict:
+    """실제 체결(fills)을 종목별 FIFO 매칭해 실현손익 집계 — 단타 churn까지 정확히 반영.
 
-    - 청산 완료 거래만 집계 (exit_price > 0). 미청산 포지션 제외.
-    - 동일 거래 중복 삽입 방지를 위해 DISTINCT 적용.
-    - 기간 기준: 청산 시각(exit_time).
+    crypto_trades.db는 봇이 닫은 포지션만 기록해 라이브 단타를 누락한다(오늘 0원 오표시).
+    체결 원장이 ground truth. 매도를 직전 매수 로트와 선입선출 매칭, 수수료 차감.
+    창 시작 이전 보유분에서 나온 매도(매수 로트 없음)는 원가 불명 → 집계 제외(보수적).
+    각 '매도' 1건을 1 trade로 카운트(원가 매칭분이 있을 때만).
     """
-    db_path = _OUTPUT_DIR / "crypto_trades.db"
-    if not db_path.exists():
-        return _empty_returns_stat()
-    try:
-        import sqlite3 as _sq
-        conn = _sq.connect(str(db_path))
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT DISTINCT symbol, entry_time, exit_time, actual_return, position_size, entry_price, exit_price "
-            "FROM crypto_trades "
-            "WHERE paper=0 AND exit_price>0 AND actual_return IS NOT NULL AND entry_price>0 "
-            "AND exit_time>=? AND exit_time<=?",
-            (date_from + "T00:00:00", date_to + "T23:59:59"),
-        )
-        rows = cur.fetchall()
-        conn.close()
-    except Exception:
-        return _empty_returns_stat()
-    if not rows:
-        return _empty_returns_stat()
-    returns, total_krw, wins = [], 0.0, 0
-    for _sym, _et, _xt, actual_ret, pos_size, entry_px, exit_px in rows:
-        r = float(actual_ret or 0)
-        # 실현손익 = (매도가 - 매수가) × 수량
-        total_krw += (float(exit_px or 0) - float(entry_px or 0)) * float(pos_size or 0)
-        returns.append(r * 100)
-        if r > 0:
-            wins += 1
+    from collections import deque, defaultdict
+    lots: dict[str, deque] = defaultdict(deque)  # sym -> deque[[qty, cost_per_unit_incl_fee]]
+    returns: list[float] = []
+    total_krw = 0.0
+    wins = 0
+    trades = 0
+    for f in sorted(fills, key=lambda x: str(x.get("executed_at") or "")):
+        sym = str(f.get("symbol") or f.get("market") or "")
+        side = str(f.get("side") or "").lower()
+        qty = float(f.get("quantity") or 0)
+        px = float(f.get("unit_price") or 0)
+        fee = float(f.get("fee") or 0)
+        if qty <= 0 or px <= 0:
+            continue
+        if side == "buy":
+            cost_per_unit = px + (fee / qty if qty else 0)  # 매수수수료를 단가에 포함
+            lots[sym].append([qty, cost_per_unit])
+        elif side == "sell":
+            remaining = qty
+            matched_qty = 0.0
+            matched_cost = 0.0
+            dq = lots[sym]
+            while remaining > 1e-12 and dq:
+                lot = dq[0]
+                take = min(remaining, lot[0])
+                matched_cost += take * lot[1]
+                matched_qty += take
+                lot[0] -= take
+                remaining -= take
+                if lot[0] <= 1e-12:
+                    dq.popleft()
+            if matched_qty <= 0:
+                continue  # 원가 불명(창 이전 보유) → 집계 제외
+            proceeds = matched_qty * px - fee * (matched_qty / qty)  # 매도수수료 비례 차감
+            pnl = proceeds - matched_cost
+            total_krw += pnl
+            ret = (pnl / matched_cost * 100.0) if matched_cost > 0 else 0.0
+            returns.append(ret)
+            trades += 1
+            if pnl > 0:
+                wins += 1
     count = len(returns)
     return {
         "avg_return_pct":    round(sum(returns) / count, 2) if count else 0.0,
         "total_realized_krw": round(total_krw, 0),
-        "trade_count": count,
+        "trade_count": trades,
         "win_count":   wins,
         "win_rate":    round(wins / count * 100, 1) if count else 0.0,
     }
+
+
+def _compute_crypto_returns_stats(date_from: str, date_to: str) -> dict:
+    """기간 내 코인 실현손익 — 실제 체결(fills) FIFO 기반 (ground truth).
+
+    과거엔 crypto_trades.db(봇이 닫은 포지션만)를 써서 라이브 단타를 통째로 누락,
+    '오늘 0원'·월간 과소집계 문제가 있었다. 체결 원장으로 정확화.
+    """
+    try:
+        fills = _fetch_crypto_trades(date_from, date_to, type_filter="all", symbol="")
+    except Exception:
+        return _empty_returns_stat()
+    if not fills:
+        return _empty_returns_stat()
+    return _crypto_realized_fifo(fills)
 
 
 def _compute_stock_returns_stats(date_from: str, date_to: str) -> dict:
