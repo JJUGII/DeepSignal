@@ -936,14 +936,22 @@ class CryptoExecutionEngine:
             )
 
         if pnl >= cfg.partial_tp_pct and pos and not pos.partial_taken:
+            # 부분익절 chunk가 거래소 최소주문액 미만이면 거부→루프. 그 경우 전량익절로 전환.
+            _partial_frac = cfg.partial_tp_fraction * float(pos.remaining_fraction)
+            _chunk_krw = sellable_krw * cfg.partial_tp_fraction
+            if _chunk_krw < float(_MIN_SELL_KRW):
+                _partial_frac = float(pos.remaining_fraction)  # 전량
+                _msg = f"+{cfg.partial_tp_pct}% 익절(부분 chunk<최소주문액 → 전량)"
+            else:
+                _msg = f"+{cfg.partial_tp_pct}% 부분익절 {cfg.partial_tp_fraction:.0%}"
             return SellExitDecision(
                 market=market,
                 reason="partial_take_profit",
-                volume_fraction=cfg.partial_tp_fraction * float(pos.remaining_fraction),
+                volume_fraction=_partial_frac,
                 limit_price=round_crypto_limit_price(
                     float(holding.avg_buy_price or 0) * (1.0 + cfg.partial_tp_pct / 100.0)
                 ),
-                message=f"+{cfg.partial_tp_pct}% 부분익절 {cfg.partial_tp_fraction:.0%}",
+                message=_msg,
                 pnl_pct=pnl,
                 win_probability=p_win,
             )
