@@ -171,6 +171,15 @@ def execute_overseas_plan(
         side = str(o.get("side") or "BUY").upper()
         if not symbol or qty <= 0 or px <= 0:
             continue
+        # 연속손절 차단: 당일 손절한 종목은 재매수 금지(복수 추격 방지)
+        if side == "BUY":
+            try:
+                from deepsignal.live_trading.overseas_risk_state import is_rebuy_blocked
+                if is_rebuy_blocked(out, symbol):
+                    logger.info("[해외] %s 당일 손절 종목 — 재매수 차단", symbol)
+                    continue
+            except Exception:
+                pass
         # 단일 주문 상한 재확인
         if qty * px > max_single:
             qty = max(1, int(max_single // px))
@@ -258,15 +267,31 @@ def auto_sell_overseas(
         tpsl = _compute_tpsl_for_position(ticker)
         tp = (tpsl.tp_pct if tpsl else None) or 0.05
         sl = (tpsl.sl_pct if tpsl else None) or -0.03
+        # 트레일링 스톱: 수익 중 고점 대비 임계 이상 하락 시 청산(이익 보존)
+        trailing_hit = False
+        try:
+            from deepsignal.live_trading.overseas_risk_state import trailing_triggered
+            trailing_hit = trailing_triggered(output_dir, p.symbol, cur, in_profit=(pnl_pct > 0))
+        except Exception:
+            pass
         trigger = None
         if tp_on and pnl_pct >= tp:
             trigger = "TAKE_PROFIT"
         elif sl_on and pnl_pct <= sl:
             trigger = "STOP_LOSS"
+        elif trailing_hit:
+            trigger = "TRAILING_STOP"
         if not trigger:
             continue
         res = broker.place_order_overseas(p.symbol, "SELL", qty, cur, execute=gate_on)
         ok = res.status == "KIS_ORDER_SUBMITTED" or (not gate_on)
+        # 손절/트레일링 청산은 당일 재매수 차단 기록(연속 추격 방지)
+        if gate_on and ok and trigger in ("STOP_LOSS", "TRAILING_STOP"):
+            try:
+                from deepsignal.live_trading.overseas_risk_state import record_stop_loss
+                record_stop_loss(output_dir, p.symbol)
+            except Exception:
+                pass
         results.append(OverseasExecResult(
             symbol=p.symbol, side="SELL", quantity=qty, limit_price_usd=cur,
             status=f"{trigger}:{res.status}", success=ok, message=res.message,
