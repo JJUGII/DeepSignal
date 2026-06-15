@@ -789,6 +789,14 @@ class CryptoExecutionEngine:
         if cur <= 0:
             return None
 
+        # 먼지(dust) 가드: 보유가치가 거래소 최소주문액 미만이면 매도 자체가 불가
+        # (validate_limit_sell이 매 틱 거부→예외를 던져 1,000회+/일 루프 발생).
+        # 매도 결정을 만들지 않고 잔량은 그대로 둔다(매도 후 안 떨어진 1e-6 등).
+        from deepsignal.crypto_trading.broker.broker import _POLICY_MIN_ORDER_KRW as _MIN_SELL_KRW
+        sellable_krw = float(getattr(holding, "valuation_krw", 0) or 0) or (float(getattr(holding, "balance", 0) or 0) * cur)
+        if 0 < sellable_krw < float(_MIN_SELL_KRW):
+            return None
+
         positions = load_execution_positions(runner_state or {})
         pos = positions.get(market)
         if pos is None and runner_state is not None:
