@@ -202,6 +202,37 @@ class KISBroker(BrokerInterface):
             raw=raw,
         )
 
+    def _inquire_psbl_order(self, symbol: str, price: float) -> dict[str, Any]:
+        """매수가능조회 TR(TTTC8908R) output — 종목별 실매수가능 현금·수량."""
+        tr = "VTTC8908R" if not self._config.is_live else "TTTC8908R"
+        try:
+            body, _ = self._kis_get_json(
+                tr, "/uapi/domestic-stock/v1/trading/inquire-psbl-order",
+                {
+                    "CANO": self._config.account_no.strip(),
+                    "ACNT_PRDT_CD": self._config.account_product_code.strip(),
+                    "PDNO": str(symbol), "ORD_UNPR": str(int(price)) if price else "0",
+                    "ORD_DVSN": "00", "CMA_EVLU_AMT_ICLD_YN": "N", "OVRS_ICLD_YN": "N",
+                },
+            )
+            if isinstance(body, dict) and str(body.get("rt_cd", "")).strip() == "0":
+                return body.get("output") or {}
+        except Exception:
+            pass
+        return {}
+
+    def get_domestic_buyable_cash(self, symbol: str = "005930", price: float = 0.0) -> float | None:
+        """국내 현금주문가능금액(ord_psbl_cash). 잔고TR과 달리 실제 주문 판정값."""
+        v = self._pick_float(self._inquire_psbl_order(symbol, price), ("ord_psbl_cash", "ORD_PSBL_CASH"))
+        return v
+
+    def get_domestic_max_buy_qty(self, symbol: str, price: float) -> int | None:
+        """종목별 실매수가능수량(max_buy_qty/nrcvb_buy_qty). KIS의 권위 있는 판정값 —
+        현금뿐 아니라 증거금율·투자경고·단기과열 등 종목별 매수제한까지 반영(0이면 매수불가)."""
+        out = self._inquire_psbl_order(symbol, price)
+        v = self._pick_float(out, ("max_buy_qty", "MAX_BUY_QTY", "nrcvb_buy_qty", "NRCVB_BUY_QTY"))
+        return int(v) if v is not None else None
+
     def get_current_price(self, symbol: str) -> float | None:
         """국내주식 실시간 현재가 조회.
 

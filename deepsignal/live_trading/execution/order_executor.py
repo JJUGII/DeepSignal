@@ -324,6 +324,52 @@ def execute_live_order_plan(
                 return base
 
         to_send = reqs[: int(policy.max_orders)]
+
+        # ── 종목별 실매수가능수량(max_buy_qty) 트림 ────────────────────────
+        # KIS는 현금뿐 아니라 종목별 증거금율·투자경고·단기과열 매수제한으로도
+        # 거부한다(예: 급등주 max_buy_qty=0 → "주문가능금액 초과"). KIS가 알려주는
+        # 종목별 실매수가능수량으로 주문을 줄이거나(부족 시) 제외(0이면)해
+        # 줄줄이 거부·알림 스팸을 막는다. 조회 실패 종목은 그대로 통과(보수적).
+        if execute and hasattr(broker, "get_domestic_max_buy_qty") and to_send:
+            from dataclasses import replace as _dc_replace2
+            _kept: list[BrokerOrderRequest] = []
+            _dropped: list[str] = []
+            _remaining_cash = None
+            for r in to_send:
+                try:
+                    mq = broker.get_domestic_max_buy_qty(str(r.symbol), float(r.limit_price or 0))
+                except Exception:
+                    mq = None
+                if mq is None:
+                    _kept.append(r)  # 조회 실패 → 판단 보류, 통과
+                    continue
+                want = int(r.quantity)
+                # 앞 주문이 쓴 현금 반영: 첫 조회 cash에서 차감 추적
+                affordable = min(want, int(mq))
+                if affordable <= 0:
+                    _dropped.append(f"{r.symbol}(매수가능0)")
+                    continue
+                if affordable < want:
+                    _kept.append(_dc_replace2(
+                        r, quantity=affordable,
+                        estimated_value=float(r.limit_price or 0) * affordable))
+                    _dropped.append(f"{r.symbol}({want}→{affordable}주)")
+                else:
+                    _kept.append(r)
+            if _dropped:
+                base.setdefault("price_warnings", []).append(
+                    "매수가능수량 트림: " + ", ".join(_dropped))
+            to_send = _kept
+        if not to_send:
+            base.update({
+                "success": False,
+                "status": "INSUFFICIENT_BUYABLE_CASH",
+                "errors": ["매수가능수량 0: 현금부족 또는 종목 매수제한(증거금·투자경고·단기과열)"],
+                "results": [],
+                "plan_warnings": list(plan.warnings),
+            })
+            return base
+
         order_guard_blocked = False
         combined_issues: list[Any] = []
         combined_guard_warnings: list[str] = []
