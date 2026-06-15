@@ -58,11 +58,11 @@ def test_holdings_text_message(monkeypatch: pytest.MonkeyPatch) -> None:
         return {"ok": True}
 
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu._send_menu_text",
+        "deepsignal.crypto_trading.telegram.menu._send_menu_text",
         fake_send,
     )
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.format_kis_holdings_telegram",
+        "deepsignal.crypto_trading.telegram.menu.format_kis_holdings_telegram",
         lambda db: ["KIS line"],
     )
     upd = {"update_id": 1, "message": {"text": f"  {MENU_TEXT_HOLDINGS}  ", "chat": {"id": "12345"}}}
@@ -77,7 +77,7 @@ def test_holdings_text_message(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_recommend_crypto_message(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu._send_menu_text",
+        "deepsignal.crypto_trading.telegram.menu._send_menu_text",
         lambda cfg, text, keyboard=None: {"ok": True},
     )
     monkeypatch.setattr(
@@ -111,11 +111,11 @@ def test_mixed_callback_and_text_single_batch(tmp_path: Path, monkeypatch: pytes
         return updates
 
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.telegram_get_updates",
+        "deepsignal.crypto_trading.telegram.menu.telegram_get_updates",
         fake_get_updates,
     )
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu.process_crypto_telegram_menu_message",
+        "deepsignal.crypto_trading.telegram.menu.process_crypto_telegram_menu_message",
         lambda upd, **kw: {"action": "holdings"},
     )
     import deepsignal.crypto_trading.crypto_telegram_flow as tg_flow
@@ -138,7 +138,7 @@ def test_mixed_callback_and_text_single_batch(tmp_path: Path, monkeypatch: pytes
 
 def test_recommend_kis_message(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "deepsignal.crypto_trading.crypto_telegram_menu._send_menu_text",
+        "deepsignal.crypto_trading.telegram.menu._send_menu_text",
         lambda cfg, text, keyboard=None: {"ok": True},
     )
     monkeypatch.setattr(

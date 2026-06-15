@@ -1,4 +1,4 @@
-"""Crypto recommendation → outcome tracking (Upbit). KIS/stock paths untouched."""
+"""Crypto recommendation → outcome tracking (Upbit/Bithumb). KIS/stock paths untouched."""
 
 from __future__ import annotations
 
@@ -10,9 +10,10 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
+from deepsignal.crypto_trading.broker.interface import CryptoBroker, CryptoOrderResult
+from deepsignal.crypto_trading.broker.selection import crypto_broker_label
 from deepsignal.crypto_trading.crypto_order_plan import CryptoOrderPlan
 from deepsignal.crypto_trading.crypto_recommendation import CryptoRecommendation
-from deepsignal.crypto_trading.upbit_broker import UpbitBroker, UpbitOrderResult
 from deepsignal.live_trading.time_utils import now_kst, now_kst_iso
 
 CRYPTO_OUTCOMES_DB_NAME = "crypto_recommendation_outcomes.db"
@@ -67,6 +68,7 @@ _EXTRA_OUTCOME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("aggression_band", "TEXT"),
     ("signed_change_rate", "REAL"),  # 진입 시 24h 등락률 (추격거래 판별)
     ("rsi_14", "REAL"),              # 진입 시 RSI (과열 판별)
+    ("broker", "TEXT"),              # upbit | bithumb
 )
 
 
@@ -217,8 +219,8 @@ def record_crypto_recommendation(
                 technical_score, macro_score, final_score, macro_regime,
                 validation_gate, liquidity_gate, score_breakdown_json, quality_gates_json,
                 model_probability, features_snapshot_json, entry_time, paper,
-                aggression_level, aggression_band, signed_change_rate, rsi_14
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                aggression_level, aggression_band, signed_change_rate, rsi_14, broker
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 rid,
@@ -256,6 +258,7 @@ def record_crypto_recommendation(
                 agg_band,
                 chg_rate,
                 rsi14,
+                str(plan.broker or "upbit").lower(),
             ),
         )
         conn.commit()
@@ -317,7 +320,7 @@ def attach_crypto_order_uuid(
 
 def apply_crypto_fill_update(
     plan: CryptoOrderPlan,
-    result: UpbitOrderResult,
+    result: CryptoOrderResult,
     status: dict[str, Any],
     fill_outcome: FillOutcome,
     *,
@@ -434,7 +437,7 @@ def apply_crypto_fill_update(
 
 def apply_crypto_trade_pipeline(
     plan: CryptoOrderPlan,
-    result: UpbitOrderResult,
+    result: CryptoOrderResult,
     *,
     outcomes_db: str | Path,
     fill_status: dict[str, Any] | None = None,
@@ -464,7 +467,7 @@ def apply_crypto_trade_pipeline(
 
 
 def refresh_crypto_outcomes(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     outcomes_db: str | Path,
     *,
     lookback_days: int = 90,
@@ -511,7 +514,7 @@ def refresh_crypto_outcomes(
                             reason=str(row["reason"] or ""),
                             display_name=str(row["display_name"] or market),
                         )
-                        result = UpbitOrderResult(
+                        result = CryptoOrderResult(
                             market=market,
                             side="ask" if side == "sell" else "bid",
                             order_type="limit",
@@ -706,20 +709,21 @@ def generate_crypto_performance_report(
             f"{row['pnl'] if row['pnl'] is not None else 'n/a'} |"
         )
     lines.append("")
-    lines.append("Note: read-only. Upbit only.")
+    lines.append("Note: read-only. Active broker from CRYPTO_BROKER / plan.broker.")
     mp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return jp, mp, summary
 
 
 def build_crypto_daily_telegram_summary(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     *,
     outcomes_db: str | Path,
 ) -> str:
     """오늘 추천·체결·보유·실현 손익 요약 (한국어)."""
     path = init_crypto_outcomes_db(outcomes_db)
     today = _today_kst()
-    lines = ["[DeepSignal 코인 일일 요약]", f"• 기준일: {today}", ""]
+    broker_label = crypto_broker_label(getattr(broker, "exchange_id", None))
+    lines = ["[DeepSignal 코인 일일 요약]", f"• 거래소: {broker_label}", f"• 기준일: {today}", ""]
 
     with sqlite3.connect(str(path)) as conn:
         conn.row_factory = sqlite3.Row
@@ -795,7 +799,7 @@ def is_crypto_daily_summary_time(now: datetime | None = None) -> bool:
 
 
 def maybe_send_crypto_daily_summary(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     cfg: Any,
     *,
     outcomes_db: str | Path,

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from deepsignal.crypto_trading.crypto_market_data import DEFAULT_CRYPTO_MARKETS
-from deepsignal.crypto_trading.upbit_broker import UpbitBroker, UpbitTicker
+from deepsignal.crypto_trading.broker.interface import CryptoTicker
 from deepsignal.scoring.analysis_conditions import DEFAULT_ANALYSIS_CONDITIONS
 
 _CRYPTO = DEFAULT_ANALYSIS_CONDITIONS.crypto
@@ -62,14 +62,79 @@ def _chunked(items: list[str], size: int) -> list[list[str]]:
     return [items[i : i + n] for i in range(0, len(items), n)]
 
 
+def _broker_is_demo(broker: Any) -> bool:
+    cfg = getattr(broker, "config", None)
+    if cfg is None:
+        return False
+    if getattr(cfg, "is_demo", False):
+        return True
+    key = getattr(cfg, "access_key", None) or getattr(cfg, "api_key", None) or ""
+    return str(key).strip() in {"dry-run-key", "demo-key"}
+
+
+def list_bithumb_krw_markets(
+    broker: Any,
+    *,
+    is_details: bool = True,
+    exclude_warning: bool = True,
+) -> tuple[list[str], dict[str, str]]:
+    """Fetch KRW-* markets from Bithumb GET /market/all."""
+    if _broker_is_demo(broker):
+        names = {m: market_display_name(m) for m in _MOCK_KRW_MARKETS}
+        return list(_MOCK_KRW_MARKETS), names
+
+    rows = broker.get_market_all(is_details=is_details)
+    if not isinstance(rows, list):
+        raise RuntimeError(f"unexpected bithumb market/all response: {rows!r}")
+
+    markets: list[str] = []
+    names: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        market = str(row.get("market") or "").strip().upper()
+        if not market.startswith("KRW-"):
+            continue
+        if exclude_warning and is_details:
+            event = row.get("market_event")
+            if isinstance(event, dict) and bool(event.get("warning")):
+                continue
+        markets.append(market)
+        ko = str(row.get("korean_name") or "").strip()
+        if ko:
+            names[market] = ko
+    markets.sort()
+    return markets, names
+
+
+def list_krw_markets(
+    broker: Any,
+    *,
+    is_details: bool = True,
+    exclude_warning: bool = True,
+) -> tuple[list[str], dict[str, str]]:
+    """Exchange-aware KRW market list (Upbit or Bithumb)."""
+    if getattr(broker, "exchange_id", "") == "bithumb":
+        return list_bithumb_krw_markets(
+            broker,
+            is_details=is_details,
+            exclude_warning=exclude_warning,
+        )
+    return list_upbit_krw_markets(
+        broker,
+        is_details=is_details,
+        exclude_warning=exclude_warning,
+    )
+
+
 def list_upbit_krw_markets(
-    broker: UpbitBroker,
+    broker: Any,
     *,
     is_details: bool = True,
     exclude_warning: bool = True,
 ) -> tuple[list[str], dict[str, str]]:
     """Fetch KRW-* markets from GET /market/all. Returns (markets, korean_name_by_market)."""
-    if broker.config.dry_run and broker.config.access_key == "dry-run-key":
+    if _broker_is_demo(broker):
         names = {m: market_display_name(m) for m in _MOCK_KRW_MARKETS}
         return list(_MOCK_KRW_MARKETS), names
 
@@ -106,14 +171,14 @@ UPBIT_KRW_MARKETS_CACHE_JSON = "UPBIT_KRW_MARKETS_CACHE.json"
 
 
 def get_upbit_krw_market_set(
-    broker: UpbitBroker,
+    broker: Any,
     *,
     output_dir: str | Path | None = None,
     max_age_seconds: float = 3600.0,
 ) -> frozenset[str]:
-    """Cached Upbit KRW market codes (filters Binance-only symbols from live_state)."""
+    """Cached KRW market codes for active broker (Upbit/Bithumb)."""
     global _UPBIT_KRW_SET_CACHE, _UPBIT_KRW_SET_CACHE_AT
-    if broker.config.dry_run and broker.config.access_key == "dry-run-key":
+    if _broker_is_demo(broker):
         return frozenset(_MOCK_KRW_MARKETS)
 
     now = time.time()
@@ -136,7 +201,7 @@ def get_upbit_krw_market_set(
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 pass
 
-    markets, _ = list_upbit_krw_markets(broker, exclude_warning=True)
+    markets, _ = list_krw_markets(broker, exclude_warning=True)
     codes = frozenset(markets)
     _UPBIT_KRW_SET_CACHE = codes
     _UPBIT_KRW_SET_CACHE_AT = now
@@ -163,16 +228,16 @@ def filter_to_upbit_markets(markets: list[str] | tuple[str, ...], valid: frozens
 
 
 def fetch_tickers_batched(
-    broker: UpbitBroker,
+    broker: Any,
     markets: list[str],
     *,
     batch_size: int = 100,
     valid_markets: frozenset[str] | None = None,
-) -> dict[str, UpbitTicker]:
+) -> dict[str, CryptoTicker]:
     normalized = [m.strip().upper() for m in markets if m and m.strip()]
     if valid_markets is not None:
         normalized = [m for m in normalized if m in valid_markets]
-    out: dict[str, UpbitTicker] = {}
+    out: dict[str, CryptoTicker] = {}
     for chunk in _chunked(normalized, batch_size):
         if chunk:
             out.update(broker.get_tickers(chunk))
@@ -180,7 +245,7 @@ def fetch_tickers_batched(
 
 
 def select_markets_for_buy_scan(
-    ticker_map: dict[str, UpbitTicker],
+    ticker_map: dict[str, CryptoTicker],
     *,
     min_acc_trade_price_24h: float,
     max_markets: int,
@@ -232,7 +297,7 @@ class CryptoUniverseResult:
 
 
 def resolve_crypto_markets(
-    broker: UpbitBroker,
+    broker: Any,
     *,
     config: CryptoUniverseConfig | None = None,
     holdings_markets: tuple[str, ...] | None = None,
@@ -264,7 +329,7 @@ def resolve_crypto_markets(
             min_acc_trade_price_24h=float(cfg.min_acc_trade_price_24h),
         )
 
-    all_markets, name_map = list_upbit_krw_markets(
+    all_markets, name_map = list_krw_markets(
         broker,
         exclude_warning=bool(cfg.exclude_market_warning),
     )

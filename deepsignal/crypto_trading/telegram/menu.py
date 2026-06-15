@@ -31,7 +31,8 @@ from deepsignal.live_trading.telegram_progress_notify import (
 
 SCAN_LOCK_KIS = "kis_recommend"
 SCAN_LOCK_CRYPTO = "crypto_recommend"
-from deepsignal.crypto_trading.upbit_broker import UpbitBroker
+from deepsignal.crypto_trading.broker.interface import CryptoBroker
+from deepsignal.crypto_trading.broker.selection import crypto_broker_label, normalize_crypto_broker_name
 
 MENU_TEXT_HOLDINGS = "현재 내 자산 보기"
 MENU_TEXT_RECOMMEND = "현재 추천 보기"
@@ -46,10 +47,21 @@ RUNNER_STATE_FILE = "CRYPTO_AUTO_RUNNER_STATE.json"
 MENU_PROMPT = (
     "[DeepSignal 메뉴]\n"
     "아래 버튼을 선택하세요.\n"
-    "• 현재 내 자산 보기 — 국내주식(KIS) + 코인(Upbit)\n"
+    "• 현재 내 자산 보기 — 국내주식(KIS) + 코인(활성 거래소)\n"
     "• 현재 추천 보기 — 국내(KIS) / 코인 선택\n"
     "• 러너 정지/시작 — 자동 분석 루프 제어"
 )
+
+
+def menu_prompt_text() -> str:
+    label = crypto_broker_label(normalize_crypto_broker_name())
+    return (
+        "[DeepSignal 메뉴]\n"
+        "아래 버튼을 선택하세요.\n"
+        f"• 현재 내 자산 보기 — 국내주식(KIS) + 코인({label})\n"
+        "• 현재 추천 보기 — 국내(KIS) / 코인 선택\n"
+        "• 러너 정지/시작 — 자동 분석 루프 제어"
+    )
 
 
 def normalize_menu_text(text: str) -> str:
@@ -145,7 +157,7 @@ def _send_menu_text(cfg: CryptoTelegramConfig, text: str, *, keyboard: dict[str,
 
 
 def telegram_send_menu_message(cfg: CryptoTelegramConfig, text: str | None = None) -> dict[str, Any]:
-    return _send_menu_text(cfg, text or MENU_PROMPT, keyboard=main_menu_reply_keyboard())
+    return _send_menu_text(cfg, text or menu_prompt_text(), keyboard=main_menu_reply_keyboard())
 
 
 def format_kis_holdings_telegram(db_path: str) -> list[str]:
@@ -221,40 +233,49 @@ def format_combined_holdings_summary(
     *,
     kis: dict[str, float],
     crypto: dict[str, float],
-    upbit_krw: float,
+    crypto_krw: float | None = None,
+    upbit_krw: float | None = None,
+    crypto_exchange_label: str = "Upbit",
 ) -> list[str]:
+    krw = float(crypto_krw if crypto_krw is not None else upbit_krw or 0)
     cost = float(kis.get("cost_krw") or 0) + float(crypto.get("cost_krw") or 0)
     value = float(kis.get("value_krw") or 0) + float(crypto.get("value_krw") or 0)
     pnl_krw = value - cost
     pnl_pct = (pnl_krw / cost * 100.0) if cost > 0 else 0.0
     kis_cash = float(kis.get("cash_krw") or 0)
-    cash_total = kis_cash + float(upbit_krw or 0)
+    cash_total = kis_cash + krw
     total_assets = value + cash_total
     return [
         "=== 전체 요약 (국내주식 + 코인) ===",
         f"투자금액: {cost:,.0f}원",
         f"현재 평가: {value:,.0f}원",
         f"손익: {pnl_krw:+,.0f}원 ({pnl_pct:+.2f}%)",
-        f"현금(KIS {kis_cash:,.0f} + Upbit {float(upbit_krw):,.0f}): {cash_total:,.0f}원",
+        f"현금(KIS {kis_cash:,.0f} + {crypto_exchange_label} {krw:,.0f}): {cash_total:,.0f}원",
         f"총자산(평가+현금): {total_assets:,.0f}원",
     ]
 
 
-def format_holdings_telegram(broker: UpbitBroker, *, db_path: str | None = None) -> str:
+def format_holdings_telegram(broker: CryptoBroker, *, db_path: str | None = None) -> str:
     from deepsignal.live_trading.telegram_user_format import format_holdings_telegram_brief
 
+    exchange_label = crypto_broker_label(getattr(broker, "exchange_id", None))
     holdings = broker.get_crypto_holdings()
     krw = broker.get_krw_available()
     if db_path:
         kis_totals = kis_holdings_totals(db_path)
         crypto_totals = crypto_holdings_totals(holdings)
-        summary = format_combined_holdings_summary(kis=kis_totals, crypto=crypto_totals, upbit_krw=krw)
+        summary = format_combined_holdings_summary(
+            kis=kis_totals,
+            crypto=crypto_totals,
+            crypto_krw=krw,
+            crypto_exchange_label=exchange_label,
+        )
         kis_lines = format_kis_holdings_telegram(db_path)
     else:
         summary = ["(국내주식 DB 미연결)"]
         kis_lines = ["=== 국내주식 (KIS) ===", "DB 경로 없음"]
 
-    crypto_lines = ["=== 코인 (Upbit) ==="]
+    crypto_lines = [f"=== 코인 ({exchange_label}) ==="]
     if not holdings:
         crypto_lines.append("보유 없음")
     else:
@@ -270,6 +291,7 @@ def format_holdings_telegram(broker: UpbitBroker, *, db_path: str | None = None)
         kis_lines=kis_lines,
         crypto_lines=crypto_lines,
         upbit_krw=krw,
+        crypto_exchange_label=exchange_label,
     )
 
 
@@ -402,7 +424,7 @@ def run_kis_recommendation_analysis_telegram(
 def resend_crypto_approval_from_saved_plan(cfg: CryptoTelegramConfig) -> bool:
     """Re-send 승인/거부 for latest CRYPTO_ORDER_PLAN.json (Telegram menu only)."""
     from deepsignal.crypto_trading.crypto_order_plan import CRYPTO_PLAN_JSON, load_crypto_plan
-    from deepsignal.crypto_trading.crypto_telegram_flow import (
+    from deepsignal.crypto_trading.telegram.flow import (
         STATUS_PENDING,
         _plan_hash,
         create_crypto_approval_request,
@@ -432,7 +454,7 @@ def resend_crypto_approval_from_saved_plan(cfg: CryptoTelegramConfig) -> bool:
 
 
 def handle_menu_crypto_recommend(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     cfg: CryptoTelegramConfig,
     *,
     take_profit_pct: float,
@@ -564,7 +586,7 @@ def handle_menu_crypto_recommend(
         lines: list[str] = []
         approval_sent = False
         if rec is not None:
-            plan = build_plan_from_recommendation(rec)
+            plan = build_plan_from_recommendation(rec, broker=getattr(broker, "exchange_id", "upbit"))
             jpath, mpath = save_crypto_plan(cfg.output_dir, plan)
             record_crypto_recommendation(plan, outcomes_db=cfg.output_dir, rec=rec)
             if cfg.bot_token and cfg.allowed_chat_id:
@@ -623,7 +645,7 @@ def handle_menu_crypto_recommend(
 
 
 def run_recommendation_analysis_telegram(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     cfg: CryptoTelegramConfig,
     *,
     take_profit_pct: float,
@@ -659,7 +681,7 @@ def process_crypto_telegram_menu_message(
     update: dict[str, Any],
     *,
     cfg: CryptoTelegramConfig,
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     runner_cfg: Any | None = None,
     db_path: str | None = None,
     network: bool = False,
@@ -835,7 +857,7 @@ def process_crypto_telegram_menu_message(
 
 def poll_telegram_updates_once(
     cfg: CryptoTelegramConfig,
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     *,
     runner_cfg: Any | None = None,
     db_path: str | None = None,
@@ -895,7 +917,7 @@ def poll_telegram_updates_once(
 
 def poll_crypto_telegram_menu_once(
     cfg: CryptoTelegramConfig,
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     *,
     runner_cfg: Any | None = None,
     db_path: str | None = None,

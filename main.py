@@ -374,53 +374,93 @@ def cmd_optimize_weights(args: argparse.Namespace) -> int:
 
 
 def cmd_crypto_check(args: argparse.Namespace) -> int:
-    """[실전-코인-01] Upbit 연결·잔고·현재가 점검 (주문 없음)."""
+    """[실전-코인-01] Upbit/Bithumb 연결·잔고·현재가 점검 (주문 없음)."""
     from deepsignal.crypto_trading.crypto_env import ensure_crypto_runtime_env
-    from deepsignal.crypto_trading.upbit_broker import UpbitBroker
-    from deepsignal.crypto_trading.upbit_config import UpbitConfigError, load_upbit_config_from_env, validate_upbit_config
+    from deepsignal.crypto_trading.crypto_holdings import format_holdings_console
+    from deepsignal.crypto_trading.crypto_market_data import DEFAULT_CRYPTO_MARKETS
+    from deepsignal.crypto_trading.broker.factory import load_crypto_broker
 
     ensure_crypto_runtime_env()
     broker_name = str(getattr(args, "broker", "upbit") or "upbit").lower()
-    if broker_name != "upbit":
-        print(f"Unsupported broker: {broker_name}")
-        return 1
     use_network = bool(getattr(args, "network", False))
     try:
-        cfg = load_upbit_config_from_env(dry_run=not use_network)
-    except UpbitConfigError as e:
+        br = load_crypto_broker(broker_name, dry_run=not use_network)
+    except ValueError as e:
         print(f"crypto-check failed: {e}")
         return 1
-    errs, warns = validate_upbit_config(cfg)
+
+    cfg = br.config
+    if broker_name == "upbit":
+        from deepsignal.crypto_trading.upbit_config import validate_upbit_config
+
+        errs, warns = validate_upbit_config(cfg)  # type: ignore[arg-type]
+    else:
+        from deepsignal.crypto_trading.broker.bithumb.config import validate_bithumb_config
+
+        errs, warns = validate_bithumb_config(cfg)  # type: ignore[arg-type]
+
     for w in warns:
         print(f"Warning: {w}")
     if errs:
         for e in errs:
             print(f"Error: {e}")
         return 1
-    br = UpbitBroker(cfg)
-    print(f"DeepSignal crypto-check OK (dry_run={cfg.dry_run})")
+
+    print(f"DeepSignal crypto-check OK (broker={broker_name}, dry_run={cfg.dry_run})")
     print(f"Config: {cfg.masked_summary()}")
+    sample_markets: list[str] = list(DEFAULT_CRYPTO_MARKETS)
     if use_network or cfg.dry_run:
         krw = br.get_krw_available()
         print(f"KRW available: {krw:,.0f}")
-        from deepsignal.crypto_trading.crypto_holdings import format_holdings_console
-
         holdings = br.get_crypto_holdings()
         for line in format_holdings_console(holdings):
             print(line)
-        from deepsignal.crypto_trading.crypto_universe import CryptoUniverseConfig, resolve_crypto_markets
+        if broker_name == "upbit":
+            from deepsignal.crypto_trading.crypto_universe import CryptoUniverseConfig, resolve_crypto_markets
 
-        meta = resolve_crypto_markets(br, config=CryptoUniverseConfig())
-        print(
-            f"KRW universe: {meta.total_krw_markets} markets, "
-            f"buy_scan={meta.scanned_for_buy} (min 24h vol {meta.min_acc_trade_price_24h:,.0f}원)"
-        )
-        if meta.markets:
-            sample = ", ".join(meta.markets[:10])
-            print(f"Scan sample: {sample}{'...' if len(meta.markets) > 10 else ''}")
-        for m in meta.markets[:3]:
+            meta = resolve_crypto_markets(br, config=CryptoUniverseConfig())  # type: ignore[arg-type]
+            print(
+                f"KRW universe: {meta.total_krw_markets} markets, "
+                f"buy_scan={meta.scanned_for_buy} (min 24h vol {meta.min_acc_trade_price_24h:,.0f}원)"
+            )
+            sample_markets = list(meta.markets[:10])
+        else:
+            sample_markets = list(DEFAULT_CRYPTO_MARKETS)
+            print(f"Sample markets (Bithumb): {', '.join(sample_markets)}")
+        if sample_markets:
+            sample = ", ".join(sample_markets[:10])
+            print(f"Ticker sample: {sample}{'...' if len(sample_markets) > 10 else ''}")
+        for m in sample_markets[:3]:
             t = br.get_ticker(m)
             print(f"{m}: {t.trade_price:,.0f} (change {t.signed_change_rate*100:.2f}%)")
+
+    if bool(getattr(args, "order_dry_run", False)):
+        test_market = sample_markets[0] if sample_markets else "KRW-BTC"
+        try:
+            ticker = br.get_ticker(test_market)
+            test_price = max(ticker.trade_price * 0.5, 1.0)
+            test_krw = 10_000.0
+            ok = True
+            if hasattr(br, "validate_limit_buy"):
+                ok, errs = br.validate_limit_buy(market=test_market, krw_amount=test_krw, price=test_price)
+                print(f"Order validate ({test_market}): {'OK' if ok else '; '.join(errs)}")
+            if hasattr(br, "place_limit_buy"):
+                if ok:
+                    result = br.place_limit_buy(
+                        market=test_market,
+                        krw_amount=test_krw,
+                        price=test_price,
+                        execute=False,
+                    )
+                    print(
+                        f"Order dry-run: status={result.status} dry_run={result.dry_run} "
+                        f"market={result.market} krw={result.krw_amount:,.0f}"
+                    )
+                else:
+                    print("Order dry-run skipped: validation failed (POST 없음)")
+        except Exception as e:
+            print(f"Order dry-run error: {e}")
+            return 1
     return 0
 
 
@@ -443,14 +483,13 @@ def cmd_crypto_daily_plan(args: argparse.Namespace) -> int:
         save_crypto_no_recommendation_artifacts,
     )
     from deepsignal.config.settings import load_settings
-    from deepsignal.crypto_trading.upbit_broker import UpbitBroker
-    from deepsignal.crypto_trading.upbit_config import UpbitConfigError, load_upbit_config_from_env
+    from deepsignal.crypto_trading.broker.factory import load_crypto_broker
+    from deepsignal.crypto_trading.broker.selection import crypto_broker_label, normalize_crypto_broker_name
     from deepsignal.storage.database import init_database
 
-    if str(getattr(args, "broker", "upbit")).lower() != "upbit":
-        print("Only --broker upbit is supported")
-        return 1
     ensure_crypto_runtime_env()
+    broker_name = str(getattr(args, "broker", "") or "").strip().lower() or normalize_crypto_broker_name()
+    broker_label = crypto_broker_label(broker_name)
     out_dir = str(getattr(args, "output_dir", "outputs") or "outputs")
     from deepsignal.scoring.analysis_conditions import DEFAULT_ANALYSIS_CONDITIONS
 
@@ -465,11 +504,28 @@ def cmd_crypto_daily_plan(args: argparse.Namespace) -> int:
     debug_holdings = bool(getattr(args, "debug_holdings", False))
     debug_quality = bool(getattr(args, "debug_quality", False))
     try:
-        cfg = load_upbit_config_from_env(dry_run=not use_network)
-    except UpbitConfigError as e:
-        print(f"crypto-daily-plan failed: {e}")
+        br = load_crypto_broker(broker_name, dry_run=not use_network)
+    except ValueError as exc:
+        print(f"crypto-daily-plan failed: {exc}")
         return 1
-    br = UpbitBroker(cfg)
+
+    cfg = br.config
+    if broker_name == "upbit":
+        from deepsignal.crypto_trading.upbit_config import validate_upbit_config
+
+        errs, warns = validate_upbit_config(cfg)  # type: ignore[arg-type]
+    else:
+        from deepsignal.crypto_trading.broker.bithumb.config import validate_bithumb_config
+
+        errs, warns = validate_bithumb_config(cfg)  # type: ignore[arg-type]
+    for w in warns:
+        print(f"Warning: {w}")
+    if errs:
+        for e in errs:
+            print(f"Error: {e}")
+        return 1
+
+    print(f"crypto-daily-plan: broker={broker_label} dry_run={cfg.dry_run}", flush=True)
     buy_quality = CryptoBuyQualityConfig(min_volume_ratio=min_vol_ratio)
     extra_markets = parse_extra_markets(getattr(args, "crypto_markets", ""))
     universe_cfg = crypto_universe_config_from_args(args, extra_markets=extra_markets)
@@ -528,7 +584,7 @@ def cmd_crypto_daily_plan(args: argparse.Namespace) -> int:
             )
         )
         return 0
-    plan = build_plan_from_recommendation(rec)
+    plan = build_plan_from_recommendation(rec, broker=broker_name)
     jpath, mpath = save_crypto_plan(out_dir, plan)
     from deepsignal.crypto_trading.crypto_recommendation_outcomes import record_crypto_recommendation
 
@@ -553,6 +609,9 @@ def cmd_crypto_telegram_approval(args: argparse.Namespace) -> int:
     import json
     from pathlib import Path
 
+    from deepsignal.crypto_trading.broker.factory import load_crypto_broker
+    from deepsignal.crypto_trading.broker.interface import CryptoOrderResult
+    from deepsignal.crypto_trading.broker.selection import crypto_broker_label, normalize_crypto_broker_name
     from deepsignal.crypto_trading.crypto_env import ensure_crypto_runtime_env
     from deepsignal.crypto_trading.crypto_order_plan import CRYPTO_PLAN_JSON, load_crypto_plan
     from deepsignal.crypto_trading.crypto_telegram_flow import (
@@ -560,10 +619,10 @@ def cmd_crypto_telegram_approval(args: argparse.Namespace) -> int:
         load_crypto_telegram_config_from_env,
         poll_crypto_telegram_until_done,
     )
-    from deepsignal.crypto_trading.upbit_broker import UpbitBroker
-    from deepsignal.crypto_trading.upbit_config import load_upbit_config_from_env
 
     ensure_crypto_runtime_env()
+    broker_name = str(getattr(args, "broker", "") or "").strip().lower() or normalize_crypto_broker_name()
+    broker_label = crypto_broker_label(broker_name)
     out_dir = str(getattr(args, "output_dir", "outputs") or "outputs")
     plan_path = Path(out_dir) / CRYPTO_PLAN_JSON
     if not plan_path.is_file():
@@ -583,8 +642,29 @@ def cmd_crypto_telegram_approval(args: argparse.Namespace) -> int:
             flush=True,
         )
         return 1
-    cfg = load_upbit_config_from_env(dry_run=not execute)
-    br = UpbitBroker(cfg)
+    try:
+        br = load_crypto_broker(broker_name, dry_run=not execute)
+    except ValueError as exc:
+        print(f"crypto-telegram-approval failed: {exc}")
+        return 1
+
+    cfg = br.config
+    if broker_name == "upbit":
+        from deepsignal.crypto_trading.upbit_config import validate_upbit_config
+
+        errs, warns = validate_upbit_config(cfg)  # type: ignore[arg-type]
+    else:
+        from deepsignal.crypto_trading.broker.bithumb.config import validate_bithumb_config
+
+        errs, warns = validate_bithumb_config(cfg)  # type: ignore[arg-type]
+    for w in warns:
+        print(f"Warning: {w}")
+    if errs:
+        for e in errs:
+            print(f"Error: {e}")
+        return 1
+
+    print(f"crypto-telegram-approval: broker={broker_label} dry_run={cfg.dry_run}", flush=True)
     tg.send = bool(getattr(args, "send", False))
     tg.poll = bool(getattr(args, "poll", False))
     req = create_crypto_approval_request(plan, cfg=tg, plan_path=plan_path)
@@ -602,13 +682,12 @@ def cmd_crypto_telegram_approval(args: argparse.Namespace) -> int:
             uuid = res.get("uuid")
             if uuid:
                 from deepsignal.crypto_trading.crypto_telegram_flow import follow_up_order_fill
-                from deepsignal.crypto_trading.upbit_broker import UpbitOrderResult
 
                 fill_out = follow_up_order_fill(
                     tg,
                     br,
                     plan,
-                    UpbitOrderResult(
+                    CryptoOrderResult(
                         market=plan.market,
                         side="bid",
                         order_type="limit",
@@ -915,33 +994,49 @@ def cmd_crypto_auto_runner(args: argparse.Namespace) -> int:
     from deepsignal.crypto_trading.crypto_auto_runner import CryptoAutoRunnerConfig
     from deepsignal.crypto_trading.crypto_env import ensure_crypto_runtime_env
     from deepsignal.crypto_trading.crypto_paper_mode import crypto_paper_mode_enabled
-    from deepsignal.crypto_trading.upbit_broker import UpbitBroker
-    from deepsignal.crypto_trading.upbit_config import UpbitConfigError, load_upbit_config_from_env
+    from deepsignal.crypto_trading.broker.factory import load_crypto_broker
+    from deepsignal.crypto_trading.broker.selection import crypto_broker_label, normalize_crypto_broker_name
 
-    if str(getattr(args, "broker", "upbit")).lower() != "upbit":
-        return 1
+    broker_name = str(getattr(args, "broker", "") or "").strip().lower() or normalize_crypto_broker_name()
     ensure_crypto_runtime_env()
     _apply_aggression_dial()  # 투자공격성 다이얼 → env 게이트 반영
     execute = bool(getattr(args, "execute", False))
+    broker_label = crypto_broker_label(broker_name)
     if execute and crypto_paper_mode_enabled():
         print(
-            "crypto-auto-runner: CRYPTO_PAPER_MODE=true blocks --execute. "
-            "Set CRYPTO_PAPER_MODE=false in .env for live Upbit orders.",
+            f"crypto-auto-runner: CRYPTO_PAPER_MODE=true blocks --execute. "
+            f"Set CRYPTO_PAPER_MODE=false in .env for live {broker_label} orders.",
             flush=True,
         )
         return 1
     try:
-        cfg_upbit = load_upbit_config_from_env(dry_run=not execute)
-    except UpbitConfigError as exc:
+        br = load_crypto_broker(broker_name, dry_run=not execute)
+    except ValueError as exc:
         print(f"crypto-auto-runner failed: {exc}", flush=True)
         return 1
-    if cfg_upbit.is_demo:
+
+    cfg = br.config
+    if broker_name == "upbit":
+        from deepsignal.crypto_trading.upbit_config import validate_upbit_config
+
+        errs, warns = validate_upbit_config(cfg)  # type: ignore[arg-type]
+    else:
+        from deepsignal.crypto_trading.broker.bithumb.config import validate_bithumb_config
+
+        errs, warns = validate_bithumb_config(cfg)  # type: ignore[arg-type]
+    for w in warns:
+        print(f"Warning: {w}", flush=True)
+    if errs:
+        for e in errs:
+            print(f"Error: {e}", flush=True)
+        return 1
+
+    if getattr(cfg, "is_demo", False):
         print(
-            "\n[DEMO MODE] No Upbit API keys configured — running with mock data.\n"
-            "  Set UPBIT_ACCESS_KEY / UPBIT_SECRET_KEY in .env to enable real trading.\n",
+            f"\n[DEMO MODE] No {broker_label} API keys configured — running with mock data.\n"
+            f"  Set API keys in .env (코인 거래소 탭) to enable real trading.\n",
             flush=True,
         )
-    br = UpbitBroker(cfg_upbit)
     from deepsignal.scoring.analysis_conditions import DEFAULT_ANALYSIS_CONDITIONS
 
     _crypto_thr = DEFAULT_ANALYSIS_CONDITIONS.crypto
@@ -1102,6 +1197,8 @@ def cmd_crypto_telegram_menu(args: argparse.Namespace) -> int:
     import json
 
     from deepsignal.config.settings import load_settings
+    from deepsignal.crypto_trading.broker.factory import load_crypto_broker
+    from deepsignal.crypto_trading.broker.selection import crypto_broker_label, normalize_crypto_broker_name
     from deepsignal.crypto_trading.crypto_auto_runner import CryptoAutoRunnerConfig
     from deepsignal.crypto_trading.crypto_env import ensure_crypto_runtime_env
     from deepsignal.crypto_trading.crypto_outcome_threshold_tuning import apply_active_thresholds_to_runner
@@ -1110,20 +1207,37 @@ def cmd_crypto_telegram_menu(args: argparse.Namespace) -> int:
         poll_telegram_updates_once,
         telegram_send_menu_message,
     )
-    from deepsignal.crypto_trading.upbit_broker import UpbitBroker
-    from deepsignal.crypto_trading.upbit_config import UpbitConfigError, load_upbit_config_from_env
     from deepsignal.storage.database import init_database
 
     ensure_crypto_runtime_env()
+    broker_name = str(getattr(args, "broker", "") or "").strip().lower() or normalize_crypto_broker_name()
+    broker_label = crypto_broker_label(broker_name)
     out_dir = str(getattr(args, "output_dir", "outputs") or "outputs")
     use_network = bool(getattr(args, "network", False))
     poll_once = bool(getattr(args, "poll_once", False))
     try:
-        cfg_upbit = load_upbit_config_from_env(dry_run=not use_network)
-    except UpbitConfigError as e:
-        print(f"crypto-telegram-menu failed: {e}")
+        br = load_crypto_broker(broker_name, dry_run=not use_network)
+    except ValueError as exc:
+        print(f"crypto-telegram-menu failed: {exc}")
         return 1
-    br = UpbitBroker(cfg_upbit)
+
+    cfg = br.config
+    if broker_name == "upbit":
+        from deepsignal.crypto_trading.upbit_config import validate_upbit_config
+
+        errs, warns = validate_upbit_config(cfg)  # type: ignore[arg-type]
+    else:
+        from deepsignal.crypto_trading.broker.bithumb.config import validate_bithumb_config
+
+        errs, warns = validate_bithumb_config(cfg)  # type: ignore[arg-type]
+    for w in warns:
+        print(f"Warning: {w}")
+    if errs:
+        for e in errs:
+            print(f"Error: {e}")
+        return 1
+
+    print(f"crypto-telegram-menu: broker={broker_label} dry_run={cfg.dry_run}", flush=True)
     runner = CryptoAutoRunnerConfig(output_dir=out_dir, network=use_network)
     apply_active_thresholds_to_runner(runner, out_dir)
     tg = load_crypto_telegram_config_from_env(output_dir=out_dir)
@@ -4673,11 +4787,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Daily AI freshness 기준 날짜 (기본: Asia/Seoul 오늘)",
     )
     p_crypto_check = sub.add_parser("crypto-check", help="[실전-코인-01] Upbit 설정·잔고·현재가 점검")
-    p_crypto_check.add_argument("--broker", type=str, default="upbit", choices=["upbit"])
+    p_crypto_check.add_argument("--broker", type=str, default="upbit", choices=["upbit", "bithumb"])
     p_crypto_check.add_argument("--network", action="store_true", help="실 API 조회 (주문 없음)")
+    p_crypto_check.add_argument(
+        "--order-dry-run",
+        action="store_true",
+        help="지정가 매수 dry-run 검증 (POST 없음, execute=False)",
+    )
 
     p_crypto_plan = sub.add_parser("crypto-daily-plan", help="[실전-코인-01] 코인 매수 추천·계획 생성")
-    p_crypto_plan.add_argument("--broker", type=str, default="upbit", choices=["upbit"])
+    p_crypto_plan.add_argument("--broker", type=str, default="upbit", choices=["upbit", "bithumb"])
     p_crypto_plan.add_argument("--market", type=str, default="KRW", help="(legacy) KRW 마켓 접두사")
     from deepsignal.crypto_trading.crypto_universe import add_crypto_universe_cli_args
 
@@ -4720,6 +4839,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_crypto_tg = sub.add_parser("crypto-telegram-approval", help="[실전-코인-01] Telegram 승인 요청")
+    p_crypto_tg.add_argument("--broker", type=str, default="upbit", choices=["upbit", "bithumb"])
     p_crypto_tg.add_argument("--output-dir", type=str, default="outputs", metavar="DIR")
     p_crypto_tg.add_argument("--send", action="store_true", help="Telegram 전송")
     p_crypto_tg.add_argument("--poll", action="store_true", help="승인/거부 폴링")
@@ -4746,7 +4866,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_crypto_paper.add_argument("--output-dir", type=str, default="outputs", metavar="DIR")
 
     p_crypto_auto = sub.add_parser("crypto-auto-runner", help="[실전-코인-01] 코인 24h auto-runner")
-    p_crypto_auto.add_argument("--broker", type=str, default="upbit", choices=["upbit"])
+    p_crypto_auto.add_argument("--broker", type=str, default="upbit", choices=["upbit", "bithumb"])
     p_crypto_auto.add_argument("--interval-minutes", type=float, default=1.0, metavar="MIN")
     p_crypto_auto.add_argument(
         "--max-order-value",
@@ -4863,6 +4983,7 @@ def build_parser() -> argparse.ArgumentParser:
         "crypto-telegram-menu",
         help="[실전-코인] Telegram 메뉴(자산/추천) 폴링",
     )
+    p_crypto_tg_menu.add_argument("--broker", type=str, default="upbit", choices=["upbit", "bithumb"])
     p_crypto_tg_menu.add_argument("--output-dir", type=str, default="outputs", metavar="DIR")
     p_crypto_tg_menu.add_argument("--network", action="store_true", help="실 API 조회")
     p_crypto_tg_menu.add_argument(

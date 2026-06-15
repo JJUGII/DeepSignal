@@ -1,4 +1,4 @@
-"""Upbit order fill polling and Telegram follow-up reports."""
+"""Order fill polling and Telegram follow-up reports (Upbit/Bithumb)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
+from deepsignal.crypto_trading.broker.interface import CryptoBroker, CryptoOrderResult
 from deepsignal.crypto_trading.crypto_order_plan import CryptoOrderPlan
-from deepsignal.crypto_trading.upbit_broker import UpbitBroker, UpbitOrderResult
 from deepsignal.live_trading.time_utils import now_kst
 
 CRYPTO_ORDER_STATUS_PREFIX = "crypto_order_status_"
@@ -21,18 +21,29 @@ def market_currency(market: str) -> str:
     return parts[-1] if parts else market
 
 
+def _float_field(raw: dict[str, Any], key: str) -> float:
+    try:
+        return float(raw.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def normalize_order_status(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Upbit/Bithumb order payloads to a shared shape."""
+    state = str(raw.get("state") or raw.get("status") or "").lower()
+    if state in ("filled", "complete", "completed"):
+        state = "done"
     return {
-        "uuid": str(raw.get("uuid", "")),
-        "market": str(raw.get("market", "")),
-        "state": str(raw.get("state", "")),
-        "side": str(raw.get("side", "")),
-        "price": float(raw.get("price", 0) or 0),
-        "volume": float(raw.get("volume", 0) or 0),
-        "executed_volume": float(raw.get("executed_volume", 0) or 0),
-        "remaining_volume": float(raw.get("remaining_volume", 0) or 0),
-        "paid_fee": float(raw.get("paid_fee", 0) or 0),
-        "remaining_fee": float(raw.get("remaining_fee", 0) or 0),
+        "uuid": str(raw.get("uuid") or raw.get("order_id") or ""),
+        "market": str(raw.get("market") or ""),
+        "state": state,
+        "side": str(raw.get("side") or ""),
+        "price": _float_field(raw, "price") or _float_field(raw, "avg_price"),
+        "volume": _float_field(raw, "volume"),
+        "executed_volume": _float_field(raw, "executed_volume"),
+        "remaining_volume": _float_field(raw, "remaining_volume"),
+        "paid_fee": _float_field(raw, "paid_fee"),
+        "remaining_fee": _float_field(raw, "remaining_fee"),
         "trades_count": int(raw.get("trades_count", 0) or 0),
         "raw": raw,
     }
@@ -64,7 +75,7 @@ def _coin_symbol(market: str) -> str:
     return parts[-1] if len(parts) >= 2 else market
 
 
-# 주요 코인 한국어 이름 (Upbit 기준)
+# 주요 코인 한국어 이름
 _COIN_KR_NAME: dict[str, str] = {
     "BTC": "비트코인", "ETH": "이더리움", "XRP": "리플", "SOL": "솔라나",
     "ADA": "에이다", "DOGE": "도지코인", "AVAX": "아발란체", "DOT": "폴카닷",
@@ -79,7 +90,6 @@ _COIN_KR_NAME: dict[str, str] = {
 
 
 def _coin_name_kr(market: str) -> str:
-    """'KRW-BTC' → '비트코인', 없으면 'BTC'"""
     sym = _coin_symbol(market)
     return _COIN_KR_NAME.get(sym, sym)
 
@@ -175,7 +185,7 @@ def write_order_status_audit(output_dir: str | Path, payload: dict[str, Any]) ->
 
 
 def poll_order_fill(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     uuid: str,
     *,
     wait_fill_seconds: float,
@@ -197,7 +207,6 @@ def poll_order_fill(
         if state == "cancel":
             return last, "cancel"
         if is_partial_fill(last):
-            # keep polling until deadline unless terminal
             pass
         time.sleep(interval)
 
@@ -207,7 +216,7 @@ def poll_order_fill(
 
 def build_fill_audit(
     plan: CryptoOrderPlan,
-    result: UpbitOrderResult,
+    result: CryptoOrderResult,
     status: dict[str, Any],
     outcome: FillOutcome,
     *,

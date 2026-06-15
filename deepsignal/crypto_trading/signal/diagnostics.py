@@ -22,7 +22,12 @@ from deepsignal.crypto_trading.crypto_recommendation_quality import (
 from deepsignal.crypto_trading.crypto_universe import market_display_name
 from deepsignal.crypto_trading.crypto_signal_scorer import load_crypto_macro_context, score_crypto_market
 from deepsignal.crypto_trading.crypto_sell_triggers import classify_crypto_sell_trigger
-from deepsignal.crypto_trading.upbit_broker import MIN_ORDER_KRW, CryptoHolding, UpbitBroker, UpbitTicker
+from deepsignal.crypto_trading.broker.interface import (
+    MIN_ORDER_KRW,
+    CryptoBroker,
+    CryptoHolding,
+    CryptoTicker,
+)
 from deepsignal.live_trading.time_utils import now_kst_iso, stamp_daily_ai_payload
 from deepsignal.scoring.analysis_conditions import DEFAULT_ANALYSIS_CONDITIONS
 
@@ -126,7 +131,7 @@ def _holding_summary(h: CryptoHolding) -> dict[str, Any]:
 
 
 def diagnose_buy_candidate(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     ticker: UpbitTicker,
     *,
     buy_quality: CryptoBuyQualityConfig | None = None,
@@ -336,7 +341,7 @@ def diagnose_sell_candidate(
 
 
 def _summarize_execution_blocks(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     pool: list["CryptoBuyCandidateDiagnostic"],
     *,
     order_krw: float,
@@ -381,7 +386,7 @@ def _summarize_no_recommendation(
     take_profit_pct: float,
     take_profit_buffer_pct: float,
     stop_loss_pct: float = _CRYPTO.stop_loss_pct,
-    broker: UpbitBroker | None = None,
+    broker: CryptoBroker | None = None,
     order_krw: float = 0.0,
 ) -> tuple[str, list[str]]:
     bullets: list[str] = []
@@ -489,7 +494,7 @@ def _summarize_no_recommendation(
 
 
 def _collect_buy_candidate_diagnostics(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     markets: tuple[str, ...] | None,
     *,
     buy_quality: CryptoBuyQualityConfig | None,
@@ -549,7 +554,7 @@ def _collect_buy_candidate_diagnostics(
 
 
 def build_crypto_recommendation_diagnostics(
-    broker: UpbitBroker,
+    broker: CryptoBroker,
     *,
     markets: tuple[str, ...] | None = None,
     universe_config: CryptoUniverseConfig | None = None,
