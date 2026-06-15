@@ -83,7 +83,19 @@ def load_recent_market_history(
         return {}, {}, None
     start = (date.today() - timedelta(days=max(lookback_days, 1))).isoformat()
     sym_list = sorted(symbols)
-    placeholders = ",".join("?" for _ in sym_list)
+    # [B8] 국내 1d는 market_prices에 .KS/.KQ 접미사로 저장됨. 6자리 코드는 접미사 변형도
+    # 함께 조회하고 결과를 원래 키로 정규화한다(이전엔 bare 6자리로 조회해 국내 종목이 전부
+    # 미스 → 유동성·상관 가드가 국내엔 무력했음).
+    query_syms: list[str] = []
+    canon: dict[str, str] = {}
+    for s in sym_list:
+        query_syms.append(s)
+        canon[s] = s
+        if s.isdigit() and len(s) == 6:
+            for suf in (".KS", ".KQ"):
+                query_syms.append(s + suf)
+                canon[s + suf] = s
+    placeholders = ",".join("?" for _ in query_syms)
     sql = (
         "SELECT symbol, substr(bar_time, 1, 10) AS d, close, volume FROM market_prices "
         f"WHERE timeframe = '1d' AND symbol IN ({placeholders}) AND bar_time >= ? "
@@ -93,13 +105,14 @@ def load_recent_market_history(
     volumes_by_day: dict[str, dict[str, float | None]] = defaultdict(dict)
     try:
         with sqlite3.connect(str(Path(db_path).expanduser().resolve())) as conn:
-            rows = conn.execute(sql, [*sym_list, start]).fetchall()
+            rows = conn.execute(sql, [*query_syms, start]).fetchall()
     except sqlite3.Error:
         return {}, {}, None
     latest: str | None = None
     for sym, d, close, vol in rows:
         if not d or not sym:
             continue
+        sym = canon.get(sym, sym)  # 접미사(.KS/.KQ) → 추천 심볼 키로 정규화
         try:
             px = float(close)
         except (TypeError, ValueError):
@@ -311,6 +324,12 @@ def apply_portfolio_risk_gates(
             sec = sector_map.get(rec.symbol, "UNKNOWN")
             sector_counts[sec] += 1
     for sec, cnt in sector_counts.items():
+        # 섹터 미분류(UNKNOWN)는 집중도 판단 불가 — 캡 적용 안 함. 섹터맵이 비거나
+        # 스캐너 급등주가 맵에 없으면 전 종목이 UNKNOWN 한 바구니로 묶여 'max 2/섹터'가
+        # 무관한 50종목을 동일섹터로 착각·차단하던 버그(상승장 0매수). 못 가르는 종목을
+        # '집중'으로 처벌하지 않는다(다른 가드: 일일 주문수·단일종목 비중은 그대로 유효).
+        if sec == "UNKNOWN":
+            continue
         if cnt >= int(config.max_same_sector_buys) and config.max_same_sector_buys > 0:
             sec_recs = [
                 r

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,6 +21,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 _KST = ZoneInfo("Asia/Seoul")
+# [B1] 모듈 logger 미정의로 게이트 차단(dry-run 강등) 분기에서 NameError 나던 버그 수정.
+logger = logging.getLogger(__name__)
 
 # 미국 티커 한국어 이름
 _US_NAME_KR: dict[str, str] = {

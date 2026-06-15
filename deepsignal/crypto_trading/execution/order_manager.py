@@ -54,24 +54,16 @@ def _append_log(output_dir: Path, entry: dict[str, Any]) -> None:
 
 
 def _round_price(price: float, market: str) -> float:
-    """업비트 KRW 마켓 호가 단위 반올림."""
-    if price >= 2_000_000:
-        return round(price / 1000) * 1000
-    if price >= 1_000_000:
-        return round(price / 500) * 500
-    if price >= 500_000:
-        return round(price / 100) * 100
-    if price >= 100_000:
-        return round(price / 50) * 50
-    if price >= 10_000:
-        return round(price / 10) * 10
-    if price >= 1_000:
-        return round(price / 5) * 5
-    if price >= 100:
-        return round(price)
-    if price >= 10:
-        return round(price * 10) / 10
-    return round(price * 100) / 100
+    """업비트 KRW 마켓 호가 단위 반올림 — 정식 함수에 위임.
+
+    [B3] 자체 구버전(KRX식) 테이블이 1M~2M를 500단위로 깎아 Upbit(1000단위)와
+    불일치 → 고가코인 매도 재호가가 거부되던 버그(A1의 코인판). 실거래 검증된
+    round_crypto_limit_price로 통일한다.
+    """
+    _ = market
+    from deepsignal.crypto_trading.crypto_sell_pricing import round_crypto_limit_price
+
+    return round_crypto_limit_price(price)
 
 
 def manage_open_sell_orders(

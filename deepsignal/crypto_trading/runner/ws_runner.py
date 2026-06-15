@@ -487,6 +487,12 @@ def _analysis_thread_main(
                         )
                         for addon_plan, pyr_reason in candidates:
                             try:
+                                # [B4] 피라미딩 add-on도 레짐 마스터게이트 통과 필요 —
+                                # 하락확정(risk-off)에서 add-on 매수가 게이트를 우회하던 갭.
+                                from deepsignal.risk.regime_gate import regime_allows_long_buy
+                                _rg_ok, _rg_why = regime_allows_long_buy(cfg.output_dir, asset="crypto")
+                                if not _rg_ok:
+                                    continue
                                 addon_price = float(addon_plan.limit_price or 0)
                                 shared.push_buy_signal(addon_plan, addon_price, fastlane=False)
                                 record_pyramid(pyr_state, market=addon_plan.market, today_key=pyr_today)

@@ -479,6 +479,22 @@ def try_execute_pending_crypto_in_inactive_window(
             "reason": f"under_min_order_krw:{float(plan.krw_amount or 0):,.0f}<{policy_min:,.0f}",
             "plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
         }
+    # [B4] 매수 경로 마스터게이트 — inactive 대기-BUY가 regime/edge/halt를 우회하던 갭.
+    # 하락확정·엣지미검증·halt에서 (장세 전환 전 승인된) 대기 BUY가 체결되던 문제. 청산(SELL)은 무관.
+    if plan.side.lower() == "buy":
+        from deepsignal.risk.edge_gate import edge_gate_allows_buy, strategy_for_live
+        from deepsignal.risk.regime_gate import regime_allows_long_buy
+        from deepsignal.risk.trading_halt import check_crypto_buy_halt
+
+        _halted, _hr = check_crypto_buy_halt(output_dir)
+        _eg_ok, _egr = edge_gate_allows_buy(output_dir, strategy_for_live("crypto"))
+        _rg_ok, _rgr = regime_allows_long_buy(output_dir, asset="crypto")
+        if _halted or not _eg_ok or not _rg_ok:
+            return {
+                "status": "blocked_by_gate",
+                "reason": _hr if _halted else (_egr if not _eg_ok else _rgr),
+                "plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
+            }
     try:
         audit = execute_crypto_plan_inactive_auto(
             broker,

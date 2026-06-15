@@ -28,6 +28,37 @@ def intraday_enabled() -> bool:
     return os.environ.get("INTRADAY_RUNNER_ENABLED", "").strip().lower() in ("1", "true", "yes")
 
 
+def _place_intraday_exit(broker: Any, symbol: str, qty: int, price: float, market: str) -> dict[str, Any]:
+    """[B7] intraday 하드스톱/트레일링 실청산 — LIMIT SELL 제출.
+
+    청산이므로 edge/regime 게이트 무관(halt는 run_intraday_tick 상단에서 이미 점검).
+    auto_sell 본경로와 중복매도 방지: 당일 이미 SELL 제출됐으면 건너뛴다. 국내는 브로커
+    계층에서 KRX 호가단위(A1)로 자동 스냅된다.
+    """
+    try:
+        from deepsignal.config.settings import load_settings
+        from deepsignal.live_trading.risk.auto_sell_executor import _already_sold_today
+
+        if _already_sold_today(load_settings().db_path, symbol):
+            return {"executed": False, "note": "당일 이미 매도 주문 존재 — 건너뜀"}
+    except Exception:  # noqa: BLE001 — 가드 조회 실패 시 매도 진행(보호 우선)
+        pass
+
+    if market == "us":
+        res = broker.place_order_overseas(symbol, "SELL", int(qty), float(price), execute=True)
+    else:
+        from deepsignal.live_trading.broker.interface import BrokerOrderRequest
+
+        req = BrokerOrderRequest(
+            symbol=symbol, side="SELL", quantity=int(qty), order_type="LIMIT",
+            limit_price=float(price), estimated_value=float(price) * int(qty),
+        )
+        res = broker.place_order(req, execute=True)
+    ok = getattr(res, "status", "") == "KIS_ORDER_SUBMITTED"
+    return {"executed": ok, "order_status": getattr(res, "status", ""),
+            "order_message": getattr(res, "message", "")}
+
+
 def run_intraday_tick(output_dir: str | Path, *, execute: bool = False, market: str = "kr") -> dict[str, Any]:
     """장중 1틱: 게이트 점검 → 보유 트레일링스톱 점검. dict 요약 반환."""
     from deepsignal.risk.trading_halt import is_trading_halted
@@ -76,7 +107,9 @@ def run_intraday_tick(output_dir: str | Path, *, execute: bool = False, market: 
         from deepsignal.live_trading.broker.kis_config import load_kis_config_from_env
         kis_acquire()  # 초당 한도 보호
         broker = KISBroker(load_kis_config_from_env(), safe_mode=not execute)
-        positions = broker.get_positions()
+        # [B7] US 모드는 해외 잔고를 봐야 한다. 이전엔 get_positions()(국내 KRX)를 호출해
+        # 미국 인트라데이 트레일링/하드스톱이 해외 포지션에 전혀 적용되지 않았다.
+        positions = broker.get_positions_overseas() if market == "us" else broker.get_positions()
     except Exception as e:  # noqa: BLE001
         out["skipped"] = f"position_fetch_failed: {e}"
         return out
@@ -96,11 +129,14 @@ def run_intraday_tick(output_dir: str | Path, *, execute: bool = False, market: 
                            hard_stop_pct=float(os.environ.get("INTRADAY_HARD_STOP_PCT", "0.07")))
         exit_now, why = ts.should_exit(cur)
         if exit_now:
-            action = {"symbol": sym, "qty": int(p.quantity or 0), "price": cur,
-                      "reason": why, "executed": False}
-            if execute:
-                # 실청산은 기존 주문 경로 재사용 (여기선 안전상 보고만; 실주문 연결은 운영 검증 후)
-                action["note"] = "execute=True지만 실청산 연결은 운영검증 후 활성화"
+            qty = int(p.quantity or 0)
+            action = {"symbol": sym, "qty": qty, "price": cur, "reason": why, "executed": False}
+            # [B7] 실청산 배선 — execute=True면 LIMIT SELL 제출(이전엔 note만 남기고 안 팔았음).
+            if execute and qty > 0:
+                try:
+                    action.update(_place_intraday_exit(broker, sym, qty, cur, market))
+                except Exception as e:  # noqa: BLE001 — 청산 실패는 다음 틱 재시도
+                    action["error"] = f"{type(e).__name__}: {e}"
             out["actions"].append(action)
     _save_peak_state(output_dir, state)
     return out

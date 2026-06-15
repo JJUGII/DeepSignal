@@ -151,7 +151,10 @@ def compute_kstock_sizing(
             pass
 
         result.recommendations.append(KstockPositionRecommendation(
-            symbol=symbol,
+            # [B2] full_symbol(거래소 prefix 포함, 예 'NYSE:GMM')을 보존. 이전엔 bare
+            # ticker를 저장해 해외 주문이 전 종목 NASD로 강제됐다(NYSE/AMEX 거부).
+            # 국내는 콜론이 없어 full==bare → 무영향.
+            symbol=full_symbol or symbol,
             name=name,
             score=round(score, 1),
             action=action,

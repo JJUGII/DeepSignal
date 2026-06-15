@@ -419,6 +419,30 @@ def run_approved_execution(
     exec_result: dict[str, Any] = {}
     warnings: list[str] = []
 
+    # [B4] 승인 실행 마스터게이트 — 자동러너(daily_ai_auto_runner)와 동일한 edge/regime/halt
+    # 정렬. 아침 계획이 레짐 하락확정으로 뒤집힌 뒤 승인 버튼을 누르면 stale BUY가 게이트를
+    # 우회해 실행되던 갭. BUY 주문이 든 plan에만 적용(청산/매도 승인은 막지 않음).
+    if ok:
+        try:
+            import json as _json
+            _p = Path(req.plan_path)
+            _plan = _json.loads(_p.read_text(encoding="utf-8")) if _p.is_file() else {}
+            _orders = _plan.get("orders") or (_plan.get("plan", {}) or {}).get("orders") or []
+            _has_buy = any(str(o.get("side", "BUY")).upper() == "BUY" for o in _orders)
+        except Exception:
+            _has_buy = True  # 불명 시 보수적으로 게이트 적용
+        if _has_buy:
+            from deepsignal.risk.edge_gate import edge_gate_allows_buy, strategy_for_live
+            from deepsignal.risk.regime_gate import regime_allows_long_buy
+            from deepsignal.risk.trading_halt import is_trading_halted
+
+            _h, _hr = is_trading_halted(output_dir)
+            _eg, _egr = edge_gate_allows_buy(output_dir, strategy_for_live("kis_domestic"))
+            _rg, _rgr = regime_allows_long_buy(output_dir, asset="kis_domestic")
+            if _h or not _eg or not _rg:
+                ok = False
+                errors.append(f"gate_block: {_hr if _h else (_egr if not _eg else _rgr)}")
+
     if ok:
         try:
             cfg = kis_config_loader()

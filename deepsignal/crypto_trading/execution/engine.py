@@ -112,6 +112,10 @@ class ExecutionEngineConfig:
     # 영구 보유됐다(실측 패자 평균 26.7시간 보유). max_hold>0이면 손익 무관 강제청산.
     # 0=비활성(기본). 운영자가 스캘프 의도(분 단위)에 맞게 env로 켠다.
     max_hold_minutes: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_MAX_HOLD_MINUTES") or 0.0))
+    # [B5] 드리프트 청산 — SL(-1.5%) 미달이지만 오래 손실 중인 데드존(time_stop |pnl|≤0.5%
+    # 밖, SL 미달)을 강제청산. 5분 스캘퍼가 -0.5~-1.5% 손실을 30분+ 끄는 느린 출혈 방지.
+    # 0=비활성. 추적 포지션(entry_ts 有)에만 동작(고아는 A2 SL이 -1.5%에서 잡음).
+    drift_exit_minutes: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_DRIFT_EXIT_MINUTES") or 30.0))
     ai_recheck_interval_sec: float = 30.0
     take_profit_pct: float = _CRYPTO.take_profit_pct
     stop_loss_pct: float = _CRYPTO.stop_loss_pct
@@ -518,6 +522,25 @@ def _resolve_win_probability(
     return default
 
 
+def _has_real_win_prob(
+    plan: CryptoOrderPlan,
+    predictor: Callable[[str], float] | None = None,
+) -> bool:
+    """승률이 실제 신호(plan 점수·ML 예측기·게이트)에서 왔는지, 아니면 default fallback인지.
+
+    [B6] ML 모델 부재(outputs/models 비면 predictor=None) 시 _resolve_win_probability가
+    buy_min_win_prob(0.55)을 기본 반환 → 게이트 통과 + 풀 Kelly 사이징(신호 0인데 풀베팅).
+    이 함수가 False면 호출측이 최소 fraction으로 보수 사이징한다.
+    """
+    bd = plan.score_breakdown if isinstance(plan.score_breakdown, dict) else {}
+    if any(k in bd for k in ("win_probability", "p_win", "ml_win_prob")):
+        return True
+    if predictor is not None:
+        return True
+    gates = plan.quality_gates if isinstance(plan.quality_gates, dict) else {}
+    return "win_probability" in gates
+
+
 def _load_lgbm_predictor(output_dir: str | Path) -> Callable[[str], float] | None:
     model_dir = Path(output_dir) / "models"
     for horizon in (5, 10):
@@ -612,14 +635,19 @@ class CryptoExecutionEngine:
                 hold = 0.0
             total_portfolio_krw = avail + hold
 
-        kelly_krw, k_frac = kelly_order_krw(
-            float(total_portfolio_krw or 0),
-            p_win,
-            take_profit_pct=cfg.take_profit_pct,
-            stop_loss_pct=cfg.stop_loss_pct,
-            max_fraction=cfg.kelly_max_fraction,
-            min_fraction=cfg.kelly_min_fraction,
-        )
+        # [B6] ML/신호 부재 시 풀켈리 금지 — p_win이 default fallback이면 최소 fraction으로.
+        if _has_real_win_prob(plan, self._predictor_fn()):
+            kelly_krw, k_frac = kelly_order_krw(
+                float(total_portfolio_krw or 0),
+                p_win,
+                take_profit_pct=cfg.take_profit_pct,
+                stop_loss_pct=cfg.stop_loss_pct,
+                max_fraction=cfg.kelly_max_fraction,
+                min_fraction=cfg.kelly_min_fraction,
+            )
+        else:
+            k_frac = float(cfg.kelly_min_fraction)
+            kelly_krw = float(total_portfolio_krw or 0) * k_frac
         base_krw = min(float(plan.krw_amount), kelly_krw) if kelly_krw > 0 else float(plan.krw_amount)
 
         ob = check_orderbook_for_buy(
@@ -756,10 +784,24 @@ class CryptoExecutionEngine:
         execute: bool,
         volume_fraction: float = 1.0,
     ) -> UpbitOrderResult:
-        vol = float(plan.volume or 0) * max(0.0, min(1.0, float(volume_fraction)))
+        full_vol = float(plan.volume or 0)
+        vol = full_vol * max(0.0, min(1.0, float(volume_fraction)))
         if vol <= 0:
             raise ValueError("SELL volume must be > 0")
         limit_px = float(plan.limit_price)
+        from deepsignal.crypto_trading.broker.broker import _POLICY_MIN_ORDER_KRW as _MIN_SELL_KRW
+        # 부분매도 chunk가 최소주문액 미만이면 매도 자체가 거부돼 포지션이 안 닫히고
+        # 매 틱 재시도된다(AAVE 사례). 전량은 팔 수 있으면 전량매도로 전환해 실제 청산.
+        if vol * limit_px < float(_MIN_SELL_KRW):
+            if full_vol * limit_px >= float(_MIN_SELL_KRW):
+                vol = full_vol  # 부분→전량 (포지션 청산 보장)
+            else:
+                # 전량도 최소액 미만 = 진짜 먼지(매도 불가) → 무해 결과 반환
+                return UpbitOrderResult(
+                    market=plan.market, side="sell", order_type="limit",
+                    price=limit_px, volume=vol, krw_amount=vol * limit_px,
+                    status="skipped_dust", dry_run=True,
+                )
         order, _step = place_limit_with_timeout(
             self.broker,
             market=plan.market,
@@ -935,6 +977,19 @@ class CryptoExecutionEngine:
                 win_probability=p_win,
             )
 
+        # [B5] 드리프트 손실 청산 — SL 미달이나 오래 손실 중인 -0.5~-1.5% 데드존의 느린 출혈.
+        if (cfg.drift_exit_minutes > 0 and held_min >= cfg.drift_exit_minutes
+                and pnl < 0 and not (pos and pos.partial_taken)):
+            return SellExitDecision(
+                market=market,
+                reason="drift_exit",
+                volume_fraction=float(pos.remaining_fraction if pos else 1.0),
+                limit_price=round_crypto_limit_price(cur),
+                message=f"드리프트 손실 {pnl:+.2f}% · {held_min:.0f}분 경과 청산",
+                pnl_pct=pnl,
+                win_probability=p_win,
+            )
+
         if pnl >= cfg.partial_tp_pct and pos and not pos.partial_taken:
             # 부분익절 chunk가 거래소 최소주문액 미만이면 거부→루프. 그 경우 전량익절로 전환.
             _partial_frac = cfg.partial_tp_fraction * float(pos.remaining_fraction)
@@ -994,6 +1049,7 @@ def scan_dynamic_exit_holdings(
         "ai_stop": 5,
         "trailing_stop": 4,
         "time_stop": 3,
+        "drift_exit": 3,  # [B5] 느린 출혈 손절 — time_stop과 동급
         "partial_take_profit": 2,
         "max_hold": 1,    # [A5] 최후 안전망 — 다른 신호 없을 때만
     }

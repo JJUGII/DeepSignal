@@ -544,15 +544,21 @@ def _run_crypto_auto_tick_body(
     from deepsignal.crypto_trading.crypto_auto_execute_policy import should_auto_execute_crypto_on_runner_tick
 
     if should_auto_execute_crypto_on_runner_tick():
-        audit = execute_crypto_plan_inactive_auto(
-            broker,
-            plan,
-            tg_cfg=tg_cfg,
-            output_dir=cfg.output_dir,
-            wait_fill_seconds=cfg.wait_fill_seconds,
-            fill_poll_interval=cfg.fill_poll_interval,
-            outcome_id=outcome_id,
-        )
+        # 틱 보호: 단일 주문(예: 먼지 매도)이 예외를 던져도 틱 전체가 멈추지 않게 격리.
+        # 이전엔 주문 1건 예외가 _run_crypto_auto_tick_body 전체를 중단시켜 코인이 싹 멈췄다.
+        try:
+            audit = execute_crypto_plan_inactive_auto(
+                broker,
+                plan,
+                tg_cfg=tg_cfg,
+                output_dir=cfg.output_dir,
+                wait_fill_seconds=cfg.wait_fill_seconds,
+                fill_poll_interval=cfg.fill_poll_interval,
+                outcome_id=outcome_id,
+            )
+        except Exception as _exc:  # noqa: BLE001 — 주문 실패는 격리하고 다음 틱 진행
+            result["inactive_crypto_error"] = f"{type(_exc).__name__}: {_exc}"
+            return result
         result["inactive_crypto_audit"] = audit
         result["order_result"] = audit.get("result")
         result["outcome_tracking"] = audit.get("outcome_tracking")

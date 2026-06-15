@@ -91,6 +91,55 @@ def _allowed_broker(broker: BrokerInterface) -> bool:
     return isinstance(broker, (DryRunBroker, KISBroker))
 
 
+# [A7] 당일 매수제한 종목 스킵 캐시 — 못 사는 급등주(단기과열/투자경고)를 반복 조회·
+# 시도하지 않게 KST 일자별로 기억한다. 다음 날 자동 리셋(제한이 풀릴 수 있으므로).
+_RESTRICTED_CACHE = "KSTOCK_RESTRICTED_SYMBOLS.json"
+
+
+def _kst_today() -> str:
+    from datetime import datetime, timedelta, timezone
+    return datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+
+
+def _load_restricted_symbols(output_dir: str | Path) -> set[str]:
+    try:
+        import json
+        p = Path(str(output_dir)) / _RESTRICTED_CACHE
+        if not p.is_file():
+            return set()
+        d = json.loads(p.read_text(encoding="utf-8")) or {}
+        return set(d.get(_kst_today()) or [])
+    except Exception:
+        return set()
+
+
+def _save_restricted_symbols(output_dir: str | Path, symbols: set[str]) -> None:
+    try:
+        import json
+        p = Path(str(output_dir)) / _RESTRICTED_CACHE
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # 당일치만 보관(과거 일자 정리)
+        p.write_text(json.dumps({_kst_today(): sorted(symbols)}, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _classify_unbuyable(broker: Any, symbol: str, price: float) -> str:
+    """[A6] max_buy_qty=0인 종목 분류.
+
+    매수가능현금(ord_psbl_cash)이 1주 가격 이상인데도 수량이 0이면 현금은 충분한
+    것이므로 'restricted'(종목 매수제한: 단기과열/투자경고/거래정지). 아니면 'cash_short'.
+    """
+    cash = None
+    try:
+        cash = broker.get_domestic_buyable_cash(symbol, price)
+    except Exception:
+        cash = None
+    if cash is not None and price > 0 and float(cash) >= price:
+        return "restricted"
+    return "cash_short"
+
+
 def execute_live_order_plan(
     plan_path: str | Path,
     broker: BrokerInterface,
@@ -330,41 +379,68 @@ def execute_live_order_plan(
         # 거부한다(예: 급등주 max_buy_qty=0 → "주문가능금액 초과"). KIS가 알려주는
         # 종목별 실매수가능수량으로 주문을 줄이거나(부족 시) 제외(0이면)해
         # 줄줄이 거부·알림 스팸을 막는다. 조회 실패 종목은 그대로 통과(보수적).
+        _restricted_hit: list[str] = []   # [A6] 종목 매수제한으로 드롭(현금은 충분)
+        _cash_short = False                # [A6] 진짜 현금부족
         if execute and hasattr(broker, "get_domestic_max_buy_qty") and to_send:
             from dataclasses import replace as _dc_replace2
+            _restricted = _load_restricted_symbols(output_dir)  # [A7] 당일 제한종목
             _kept: list[BrokerOrderRequest] = []
             _dropped: list[str] = []
-            _remaining_cash = None
             for r in to_send:
+                sym = str(r.symbol)
+                # [A7] 당일 이미 매수제한 확인된 종목 → 재조회·시도 없이 스킵
+                if sym in _restricted:
+                    _dropped.append(f"{sym}(매수제한·당일스킵)")
+                    _restricted_hit.append(sym)
+                    continue
+                px = float(r.limit_price or 0)
                 try:
-                    mq = broker.get_domestic_max_buy_qty(str(r.symbol), float(r.limit_price or 0))
+                    mq = broker.get_domestic_max_buy_qty(sym, px)
                 except Exception:
                     mq = None
                 if mq is None:
                     _kept.append(r)  # 조회 실패 → 판단 보류, 통과
                     continue
                 want = int(r.quantity)
-                # 앞 주문이 쓴 현금 반영: 첫 조회 cash에서 차감 추적
                 affordable = min(want, int(mq))
                 if affordable <= 0:
-                    _dropped.append(f"{r.symbol}(매수가능0)")
+                    # [A6] 현금부족 vs 종목 매수제한 판별
+                    if _classify_unbuyable(broker, sym, px) == "restricted":
+                        _restricted_hit.append(sym)
+                        _restricted.add(sym)
+                        _dropped.append(f"{sym}(종목매수제한)")
+                    else:
+                        _cash_short = True
+                        _dropped.append(f"{sym}(현금부족)")
                     continue
                 if affordable < want:
                     _kept.append(_dc_replace2(
-                        r, quantity=affordable,
-                        estimated_value=float(r.limit_price or 0) * affordable))
-                    _dropped.append(f"{r.symbol}({want}→{affordable}주)")
+                        r, quantity=affordable, estimated_value=px * affordable))
+                    _dropped.append(f"{sym}({want}→{affordable}주)")
                 else:
                     _kept.append(r)
+            if _restricted_hit:
+                _save_restricted_symbols(output_dir, _restricted)
             if _dropped:
                 base.setdefault("price_warnings", []).append(
                     "매수가능수량 트림: " + ", ".join(_dropped))
             to_send = _kept
         if not to_send:
+            # [A6] 사유 정확화 — 현금이 멀쩡한데 종목제한이면 그렇게 보고한다.
+            if _restricted_hit and not _cash_short:
+                _status = "ALL_CANDIDATES_RESTRICTED"
+                _err = ("종목 매수제한으로 전 종목 제외(단기과열·투자경고·거래정지 등) — "
+                        f"현금은 충분: {', '.join(_restricted_hit)}")
+            elif _cash_short and not _restricted_hit:
+                _status = "INSUFFICIENT_BUYABLE_CASH"
+                _err = "현금부족: 매수가능현금이 1주 가격에 미달합니다."
+            else:
+                _status = "INSUFFICIENT_BUYABLE_CASH"
+                _err = "매수가능수량 0: 현금부족 또는 종목 매수제한(증거금·투자경고·단기과열)"
             base.update({
                 "success": False,
-                "status": "INSUFFICIENT_BUYABLE_CASH",
-                "errors": ["매수가능수량 0: 현금부족 또는 종목 매수제한(증거금·투자경고·단기과열)"],
+                "status": _status,
+                "errors": [_err],
                 "results": [],
                 "plan_warnings": list(plan.warnings),
             })
