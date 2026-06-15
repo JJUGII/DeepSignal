@@ -823,6 +823,15 @@ def cmd_market_open_report(args: argparse.Namespace) -> int:
     return 0 if res.get("ok") else 0  # 발송 실패해도 러너 죽지 않게 0
 
 
+def cmd_crypto_pnl_diagnosis(args: argparse.Namespace) -> int:
+    """[코인-진단] 실현손익을 매도트리거·보유시간별로 분해 — 손실 원인 추적."""
+    from deepsignal.reporting.crypto_pnl_diagnosis import diagnose_crypto_pnl, format_diagnosis_text
+    out = str(getattr(args, "output_dir", "outputs") or "outputs")
+    d = diagnose_crypto_pnl(out, days=int(getattr(args, "days", 30) or 30))
+    print(format_diagnosis_text(d))
+    return 0
+
+
 def cmd_kr_scan(args: argparse.Namespace) -> int:
     """[국내-스캔] 전 시장 급등주 스캔(KIS 순위 API) → kr_movers_v1 신호 기록."""
     import os as _o
@@ -5917,6 +5926,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_agr = sub.add_parser("aggression-report", help="[보고] 공격성 단계별·추격거래별 성과 집계 (단계 재책정용)")
     p_agr.add_argument("--output-dir", type=str, default="outputs")
     p_agr.add_argument("--telegram", action="store_true", help="결과를 텔레그램으로도 발송")
+    p_pnl = sub.add_parser("crypto-pnl-diagnosis", help="[코인-진단] 실현손익 매도트리거·보유시간별 분해")
+    p_pnl.add_argument("--output-dir", type=str, default="outputs")
+    p_pnl.add_argument("--days", type=int, default=30)
     p_krs = sub.add_parser("kr-scan", help="[국내-스캔] 전 시장 급등주 스캔(KIS 순위 API) → 신호 기록")
     p_krs.add_argument("--force", action="store_true", help="KR_SCANNER_ENABLED 무시하고 강제 실행")
     p_nws = sub.add_parser("crypto-news-refresh", help="[코인-LLM] 뉴스 감성/악재를 LLM 분석해 캐시 갱신 (스코어·게이트가 읽음)")
@@ -6138,6 +6150,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_aggression_report(args)
     elif args.command == "crypto-news-refresh":
         return cmd_crypto_news_refresh(args)
+    elif args.command == "crypto-pnl-diagnosis":
+        return cmd_crypto_pnl_diagnosis(args)
     elif args.command == "kr-scan":
         return cmd_kr_scan(args)
     elif args.command == "regime-trend-status":
