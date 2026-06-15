@@ -107,6 +107,19 @@ def _max_single_order_usd() -> float:
         return 300.0
 
 
+def _overseas_min_price_usd() -> float:
+    """[A4] 해외 매수 최소 주가(USD) — 마이크로캡/페니주 복권베팅 차단.
+
+    실거래에서 $3~8 페니주(AKAN·GMM·ONEG 등)를 도배하던 문제. 기본 $5(미국 페니주
+    규제선). env DEEPSIGNAL_OVERSEAS_MIN_PRICE_USD 로 상향(예: 10) 가능. 0=비활성.
+    더 견고한 시총·거래대금(ADV) 필터는 유니버스 정의 단계가 본령(추후).
+    """
+    try:
+        return float(os.environ.get("DEEPSIGNAL_OVERSEAS_MIN_PRICE_USD", "5") or 5)
+    except Exception:
+        return 5.0
+
+
 def build_overseas_order_plan(
     output_dir: str | Path,
     *,
@@ -163,6 +176,11 @@ def build_overseas_order_plan(
             # KRW 환산가 → 원래 USD 단가 복원
             price_usd = (rec.current_price or 0) / usd_rate if usd_rate else 0
             if price_usd <= 0:
+                continue
+            # [A4] 마이크로캡/페니주 제외 — 저가 복권베팅 차단
+            _min_px = _overseas_min_price_usd()
+            if _min_px > 0 and price_usd < _min_px:
+                warnings.append(f"{rec.symbol} ${price_usd:.2f} < 최소가 ${_min_px:.0f} — 마이크로캡 제외")
                 continue
             qty = int(rec.recommended_shares)
             est_usd = round(qty * price_usd, 2)

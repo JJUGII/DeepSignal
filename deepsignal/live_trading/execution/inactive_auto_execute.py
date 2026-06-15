@@ -138,6 +138,16 @@ def execute_kis_plan_inactive_auto(
                     output_dir=str(out),
                     require_pre_trade_runbook=False,
                 )
+                # 거부 사유 학습: 파생ETF 미신청 등 계좌 거래불가 종목은 블록리스트에
+                # 기록해 다음 계획부터 후보에서 제외(동일 종목 5분마다 거부 반복 방지).
+                try:
+                    from deepsignal.live_trading.symbol_blocklist import maybe_block_from_rejection
+                    for _r in (exec_result.get("results") or []):
+                        if str(_r.get("status") or "") != "KIS_ORDER_SUBMITTED":
+                            maybe_block_from_rejection(
+                                str(_r.get("symbol") or ""), str(_r.get("message") or ""), output_dir=out)
+                except Exception:
+                    pass
                 channel = _kis_auto_approval_channel()
                 live_payload = {
                     **exec_result,

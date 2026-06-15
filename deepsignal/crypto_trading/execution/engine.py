@@ -108,6 +108,10 @@ class ExecutionEngineConfig:
     # 타임스톱: 방향 안 나오면 청산. 너무 짧으면 왕복비용(~0.4%)만 확정 — 다이얼 연동
     time_stop_minutes: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_TIME_STOP_MINUTES") or 5.0))
     time_stop_max_abs_pnl_pct: float = 0.5
+    # [A5] 절대 최대보유 — time_stop은 |pnl|≤0.5%만 청산해 -0.5~-1.5% 드리프트가
+    # 영구 보유됐다(실측 패자 평균 26.7시간 보유). max_hold>0이면 손익 무관 강제청산.
+    # 0=비활성(기본). 운영자가 스캘프 의도(분 단위)에 맞게 env로 켠다.
+    max_hold_minutes: float = field(default_factory=lambda: float(os.environ.get("CRYPTO_MAX_HOLD_MINUTES") or 0.0))
     ai_recheck_interval_sec: float = 30.0
     take_profit_pct: float = _CRYPTO.take_profit_pct
     stop_loss_pct: float = _CRYPTO.stop_loss_pct
@@ -812,6 +816,33 @@ class CryptoExecutionEngine:
         else:
             held_min = 0.0
 
+        # [A2] 하드 손절 — 보유분 스캔 경로(scan_dynamic_exit_holdings)에 SL 분기가 없어
+        # 손실 종목이 영구 봉지로 쌓이던 버그(미청산 79건). pnl은 브로커 제공값이라
+        # 추적상태(고아 포지션) 무관하게 동작한다. 신선한 추적 포지션만 min_hold로
+        # churn을 막고, 고아(entry_ts 불명)는 즉시 손절을 허용해 봉지를 끊는다.
+        _min_hold = float(_CRYPTO.min_hold_minutes_before_sell)
+        _tracked_fresh = bool(pos and pos.entry_ts) and held_min < _min_hold
+        if pnl <= float(cfg.stop_loss_pct) and not _tracked_fresh:
+            exit_px = cur
+            try:
+                ob = self.broker.get_orderbook(market, levels=1)
+                units = ob.get("orderbook_units") or []
+                if units:
+                    bid = float(units[0].get("bid_price") or 0)
+                    if bid > 0:
+                        exit_px = bid
+            except Exception:
+                pass
+            return SellExitDecision(
+                market=market,
+                reason="stop_loss",
+                volume_fraction=float(pos.remaining_fraction if pos else 1.0),
+                limit_price=round_crypto_limit_price(exit_px),
+                message=f"하드손절 {pnl:.2f}% ≤ {cfg.stop_loss_pct:.2f}%",
+                pnl_pct=pnl,
+                win_probability=None,
+            )
+
         need_ai = True
         if pos and pos.last_ai_check_ts:
             try:
@@ -884,6 +915,18 @@ class CryptoExecutionEngine:
                 win_probability=p_win,
             )
 
+        # [A5] 절대 최대보유 초과 — 손익 무관 강제청산(드리프트 영구보유 방지). 기본 off.
+        if cfg.max_hold_minutes > 0 and held_min >= cfg.max_hold_minutes:
+            return SellExitDecision(
+                market=market,
+                reason="max_hold",
+                volume_fraction=float(pos.remaining_fraction if pos else 1.0),
+                limit_price=round_crypto_limit_price(cur),
+                message=f"최대보유 {cfg.max_hold_minutes:.0f}분 초과 — 강제청산 ({pnl:+.2f}%)",
+                pnl_pct=pnl,
+                win_probability=p_win,
+            )
+
         if pnl >= cfg.partial_tp_pct and pos and not pos.partial_taken:
             return SellExitDecision(
                 market=market,
@@ -931,10 +974,12 @@ def scan_dynamic_exit_holdings(
     engine = CryptoExecutionEngine(broker, cfg=engine_cfg, output_dir=output_dir)
     best: SellExitDecision | None = None
     priority = {
+        "stop_loss": 6,   # [A2] 하드 손절 최우선 — 손실 봉지를 끊는다
         "ai_stop": 5,
         "trailing_stop": 4,
         "time_stop": 3,
         "partial_take_profit": 2,
+        "max_hold": 1,    # [A5] 최후 안전망 — 다른 신호 없을 때만
     }
     state = runner_state if runner_state is not None else {}
     for h in broker.get_crypto_holdings():

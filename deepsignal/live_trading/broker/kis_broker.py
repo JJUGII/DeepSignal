@@ -570,13 +570,19 @@ class KISBroker(BrokerInterface):
         if len(acnt) != 2 or not acnt.isdigit():
             raise BrokerError("KIS_ACCOUNT_PRODUCT_CODE must be 2-digit ACNT_PRDT_CD")
 
+        # [A1] KRX 호가단위 정렬 — int(round())은 1원만 깎아 무효가격(APBK0506) 발생.
+        # 제출 직전 호가단위 격자로 스냅(매수=올림/매도=내림으로 체결성 보존).
+        from deepsignal.live_trading.broker.krx_tick import round_krx_price
+
+        ord_unpr = round_krx_price(lim, side=(request.side or ""))
+
         return {
             "CANO": cano,
             "ACNT_PRDT_CD": acnt,
             "PDNO": pdno,
             "ORD_DVSN": "00",
             "ORD_QTY": str(int(request.quantity)),
-            "ORD_UNPR": str(int(round(lim))),
+            "ORD_UNPR": str(ord_unpr),
         }
 
     def _order_headers(self, side: str = "BUY") -> dict[str, str]:

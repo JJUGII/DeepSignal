@@ -35,10 +35,16 @@ def build_ai_live_order_plan(
             "--allow-sell-candidates was set, but SELL orders remain excluded because current live-approve validates BUY only."
         )
 
+    # 영속 블록리스트(파생ETF 미신청 등 계좌 거래불가 종목) — 후보에서 제외.
+    from deepsignal.live_trading.symbol_blocklist import load_blocklist
+    blocked_syms = load_blocklist(getattr(config, "output_dir", "outputs") or "outputs")
+
     for rec in recommendations:
         if not rec.allowed_for_plan:
             continue
         if rec.action not in {"BUY", "INCREASE"}:
+            continue
+        if str(rec.symbol).split(":")[-1].strip().zfill(6) in blocked_syms:
             continue
         if rec.suggested_limit_price is None or rec.suggested_limit_price <= 0:
             continue

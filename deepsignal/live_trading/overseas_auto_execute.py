@@ -132,12 +132,15 @@ def execute_overseas_plan(
     # 매도/청산(auto_sell_overseas)은 별도 경로라 영향받지 않는다.
     if gate_on:
         from deepsignal.risk.edge_gate import edge_gate_allows_buy, strategy_for_live
+        from deepsignal.risk.regime_gate import regime_allows_long_buy
         from deepsignal.risk.trading_halt import is_trading_halted
 
         _halted, _hr = is_trading_halted(output_dir)
         _eg_ok, _er = edge_gate_allows_buy(output_dir, strategy_for_live("overseas"))
-        if _halted or not _eg_ok:
-            logger.warning("해외 실매수 차단(dry-run 강등): %s", _hr if _halted else _er)
+        _rg_ok, _rr = regime_allows_long_buy(output_dir, asset="overseas")
+        if _halted or not _eg_ok or not _rg_ok:
+            _why = _hr if _halted else (_er if not _eg_ok else _rr)
+            logger.warning("해외 실매수 차단(dry-run 강등): %s", _why)
             gate_on = False
 
     max_orders = _max_orders_per_run()

@@ -123,6 +123,7 @@ class LevDecision:
 
 def decide(out: str | Path) -> LevDecision:
     from deepsignal.risk.edge_gate import edge_gate_status, edge_gate_enforced
+    from deepsignal.risk.regime_gate import regime_allows_long_buy
     from deepsignal.risk.trading_halt import is_trading_halted
 
     sig = compute_nasdaq_signal()
@@ -132,13 +133,16 @@ def decide(out: str | Path) -> LevDecision:
     st = edge_gate_status(out, EDGE_STRATEGY)
     deploy_ok = bool(st.get("deploy")) or (not edge_gate_enforced())
     enabled = leverage_enabled()
+    # DM6: 2x 레버리지 롱은 글로벌 risk-off 확정 시 진입 금지(청산은 무관).
+    regime_ok, _rg_reason = regime_allows_long_buy(out, asset="leverage_nasdaq")
 
     if sig.close is None:
         return LevDecision("HOLD", ETF_NASDAQ_2X, sig, deploy_ok, enabled, halted, False, f"신호 없음: {sig.reason}")
     if sig.strong_up and not holding:
-        ok = deploy_ok and enabled and not halted
+        ok = deploy_ok and enabled and not halted and regime_ok
         why = ("진입 가능" if ok else
-               ("엣지 게이트 미배포" if not deploy_ok else "레버리지 OFF" if not enabled else "halt"))
+               ("엣지 게이트 미배포" if not deploy_ok else "레버리지 OFF" if not enabled
+                else "halt" if halted else "레짐 risk-off"))
         return LevDecision("ENTER", ETF_NASDAQ_2X, sig, deploy_ok, enabled, halted, ok, f"강한 상승 — {why}")
     if (not sig.strong_up) and holding:
         return LevDecision("EXIT", ETF_NASDAQ_2X, sig, deploy_ok, enabled, halted, True, "상승 둔화 — 청산")

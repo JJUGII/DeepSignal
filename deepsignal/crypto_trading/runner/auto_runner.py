@@ -356,6 +356,15 @@ def _run_crypto_auto_tick_body(
         buy_daily_limit = True
         result.setdefault("halt_reason", eg_reason)
 
+    # ── 레짐 마스터게이트(DM6): risk-off 확정 시 신규 롱 차단(청산 계속) ──────
+    from deepsignal.risk.regime_gate import regime_allows_long_buy
+
+    rg_ok, rg_reason = regime_allows_long_buy(cfg.output_dir, asset="crypto")
+    result["regime_gate"] = {"allows_buy": rg_ok, "reason": rg_reason}
+    if not rg_ok:
+        buy_daily_limit = True
+        result.setdefault("halt_reason", rg_reason)
+
     tg_cfg = load_crypto_telegram_config_from_env(output_dir=cfg.output_dir)
     tg_cfg.send = bool(cfg.send_telegram)
     tg_cfg.max_orders_per_day = cfg.max_orders_per_day

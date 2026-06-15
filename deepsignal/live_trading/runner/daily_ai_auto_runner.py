@@ -242,6 +242,26 @@ def run_evening_report(
     )
     state.last_report_date = _today_key()
     state.last_event = "report_done"
+
+    # [A3] 체결 재조정 — 자동 실행기가 체결을 안 남겨 real_fill_history가 비던 문제(주문 110 vs 체결 1).
+    # 저녁 리포트 시점(일 1회)에 최근 SUBMITTED 주문의 체결을 백필한다. read-only(safe_mode)·전구간 가드.
+    try:
+        from deepsignal.config.settings import load_settings
+        from deepsignal.live_trading.broker.kis_broker import KISBroker
+        from deepsignal.live_trading.broker.kis_config import load_kis_config_from_env
+        from deepsignal.live_trading.execution.fill_tracker import (
+            reconcile_fills_from_order_history,
+        )
+
+        _rec = reconcile_fills_from_order_history(
+            KISBroker(load_kis_config_from_env(), safe_mode=True),
+            load_settings().db_path,
+        )
+        if _rec.get("inserted"):
+            state.last_event = f"report_done(+{_rec['inserted']} fills)"
+    except Exception:  # noqa: BLE001 — 체결 재조정 실패는 리포트/루프에 영향 없음
+        pass
+
     tg = _telegram_cfg(runner)
     if tg.bot_token and tg.allowed_chat_id:
         send_runner_telegram(text=format_operator_daily_report_text(report), config=tg)
@@ -346,12 +366,15 @@ def tick_runner(
     # halt 중이거나 국내주식 전략 엣지 미검증이면 신규 매수(plan/resume/inactive/
     # approval)를 전부 건너뛴다. 위 _tick_auto_sell(청산)은 이미 실행됐다.
     from deepsignal.risk.edge_gate import edge_gate_allows_buy, strategy_for_live
+    from deepsignal.risk.regime_gate import regime_allows_long_buy
     from deepsignal.risk.trading_halt import is_trading_halted
 
     _halted, _halt_reason = is_trading_halted(runner.output_dir)
     _eg_ok, _eg_reason = edge_gate_allows_buy(runner.output_dir, strategy_for_live("kis_domestic"))
-    if _halted or not _eg_ok:
-        state.last_event = f"buys_blocked: {_halt_reason if _halted else _eg_reason}"
+    _rg_ok, _rg_reason = regime_allows_long_buy(runner.output_dir, asset="kis_domestic")
+    if _halted or not _eg_ok or not _rg_ok:
+        _block = _halt_reason if _halted else (_eg_reason if not _eg_ok else _rg_reason)
+        state.last_event = f"buys_blocked: {_block}"
         if _due_scheduled(state.last_report_date, runner.report_time):
             state = run_evening_report(runner, state=state)
         return state

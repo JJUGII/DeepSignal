@@ -500,6 +500,72 @@ def format_fill_summary_console(s: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def reconcile_fills_from_order_history(
+    broker: Any,
+    db_path: str,
+    *,
+    limit: int = 100,
+    broker_name: str = "kis",
+) -> dict[str, Any]:
+    """[A3] real_order_history의 최근 SUBMITTED 주문을 KIS 상태조회해 real_fill_history에 백필.
+
+    자동 실행기(order_executor)는 주문 제출만 하고 체결 폴링을 안 해 real_fill_history가
+    비어 손익 정산이 불가했다(주문 110 vs 체결 1). 이 함수를 러너 틱에서 호출해 메운다.
+
+    가드: 모든 예외를 잡아 결과 dict로만 반환한다(러너 루프 보호). 저장은 fill_id dedupe로 멱등.
+    반환: {queried_orders, inserted, skipped, errors}.
+    """
+    from dataclasses import asdict as dc_asdict
+
+    out: dict[str, Any] = {"queried_orders": 0, "inserted": 0, "skipped": 0, "errors": []}
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT order_id FROM real_order_history "
+                "WHERE status='SUBMITTED' AND order_id IS NOT NULL AND TRIM(order_id) != '' "
+                "ORDER BY created_at DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        finally:
+            conn.close()
+        order_ids = [str(r[0]).strip() for r in rows if r and r[0]]
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"order_history 조회 실패: {type(exc).__name__}: {exc}")
+        return out
+
+    kis_rows: list[dict[str, Any]] = []
+    for oid in order_ids:
+        try:
+            for st in broker.get_order_status(order_id=oid):
+                d = dc_asdict(st) if hasattr(st, "__dataclass_fields__") else dict(st)
+                kis_rows.append({
+                    "order_id": d.get("order_id"),
+                    "symbol": d.get("symbol"),
+                    "side": d.get("side"),
+                    "status": d.get("status"),
+                    "quantity": d.get("quantity"),
+                    "filled_quantity": d.get("filled_quantity"),
+                    "remaining_quantity": d.get("remaining_quantity"),
+                    "raw": d.get("raw"),
+                })
+        except Exception as exc:  # noqa: BLE001
+            out["errors"].append(f"{oid} 상태조회 실패: {type(exc).__name__}")
+    out["queried_orders"] = len(order_ids)
+    if not kis_rows:
+        return out
+
+    try:
+        fill_recs = extract_fills_from_kis_status_dicts(kis_rows)
+        ins, sk = persist_fill_records_to_db(db_path, fill_recs, broker=broker_name)
+        out["inserted"], out["skipped"] = ins, sk
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"체결 저장 실패: {type(exc).__name__}: {exc}")
+    return out
+
+
 def persist_fill_records_to_db(
     db_path: str,
     fills: Sequence[FillRecord],

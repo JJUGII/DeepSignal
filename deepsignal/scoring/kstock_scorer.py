@@ -12,6 +12,13 @@
   NOTIFY    ≥ 72pt  (알림)
   AUTO      ≥ 82pt  (자동매수 후보)
   STRONG    ≥ 88pt  (강한 매수)
+
+[DM5 호라이즌 정책] IC 분해(2026-06-05)·캘리브레이션(scripts/calibrate_kgsqs.py)에서
+이 1~5분 호라이즌 점수는 수수료 차감 후 어떤 임계값도 양(+) 기대수익을 못 줌이 확인됐다
+(국내 총점은 반예측, 코인은 평탄). 따라서 K-GSQS는 **보조·알림(advisory) 등급**이며,
+실제 자동매수는 EDGE_GATE(검증된 엣지) + regime_gate(DM6 risk-off 차단)를 통과할 때만
+열린다. 검증된 엣지가 있는 호라이즌은 일봉 레짐(S&P500 200일선)뿐 — 그쪽이 1급 신호다.
+위 AUTO/STRONG 임계는 게이트가 닫혀 있는 한 매매를 일으키지 않는다(알림 한정).
 """
 
 from __future__ import annotations
@@ -326,7 +333,7 @@ def score_market(f: KStockFeatures) -> float:
     elif alpha >= 0.2:
         score += 15.0
     elif alpha >= 0.0:
-        score += 5.0
+        score += 0.0  # [P2] 보합(alpha≈0, 데이터 없을 때 포함)은 중립 — 상향 +5 제거
     elif alpha < -0.5:
         score -= 20.0
     else:
@@ -360,13 +367,16 @@ def score_risk(f: KStockFeatures) -> float:
     if f.is_halt or f.is_limit_up or f.is_limit_down or f.is_admin:
         return 0.0
 
+    # [P2] ATR 데이터 없음(0.0)은 '안정'이 아니라 '정보 없음' → 중립 50 반환.
+    # (이전엔 base 70에서 −10=60으로, 변동성 미지 종목을 안전하다고 과대평가했음)
+    if f.atr_pct == 0.0:
+        return 50.0
+
     score = 70.0  # 기본값
 
     # ATR% — 너무 낮거나 높으면 감점
     atr = f.atr_pct
-    if atr == 0.0:
-        score -= 10.0  # 데이터 없음
-    elif atr <= 0.5:
+    if atr <= 0.5:
         score += 20.0  # 안정
     elif atr <= 1.0:
         score += 10.0

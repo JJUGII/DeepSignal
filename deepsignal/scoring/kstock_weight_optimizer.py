@@ -22,6 +22,9 @@ from typing import Any
 MIN_SAMPLES = 50
 # 마지막 최적화 이후 신규 샘플 수
 UPDATE_INTERVAL = 20
+# [P6] 적용 게이트: held-out(OOS) 승률 개선이 이 값(2%p) 이상일 때만 가중 적용.
+# 기존 improvement>=0(개선 0에도 적용)은 노이즈에 가중을 교란시켰음 → 과적합 방지.
+MIN_IMPROVEMENT = 0.02
 
 # K-GSQS 기본 가중치 (kstock_scorer.py 와 동기화)
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -115,21 +118,25 @@ class KStockWeightOptimizer:
             for r in records
         ])  # (N,)
 
-        # 목적함수: 음의 Sharpe Ratio
+        # [P6] 시간순 train(70%)/test(30%) 분할 — 레코드는 append=시간순이라 미래 누설 없음.
+        n = len(records)
+        split = int(n * 0.7)
+        X_tr, y_tr, X_te, y_te = X[:split], y[:split], X[split:], y[split:]
+        if len(y_te) < 10:
+            return {"error": f"OOS 표본 부족({len(y_te)})", "weights": DEFAULT_WEIGHTS,
+                    "n_samples": n, "applied": False}
+
+        # 목적함수: train 구간 음의 Sharpe Ratio (적합은 train만)
         def neg_sharpe(w: "np.ndarray") -> float:
             w = np.abs(w)
             w = w / w.sum()
-            scores = X @ w
-            threshold = np.percentile(scores, 50)
-            mask = scores >= threshold
+            scores = X_tr @ w
+            mask = scores >= np.percentile(scores, 50)
             if mask.sum() < 5:
                 return 1.0
-            selected_ret = y[mask]
-            mean_ret = selected_ret.mean()
-            std_ret = selected_ret.std()
-            if std_ret < 1e-8:
-                return -mean_ret * 100
-            return -(mean_ret / std_ret)
+            sel = y_tr[mask]
+            m, s = sel.mean(), sel.std()
+            return -m * 100 if s < 1e-8 else -(m / s)
 
         w0 = np.array([DEFAULT_WEIGHTS[k] for k in COMPONENT_KEYS])
         constraints = {"type": "eq", "fun": lambda w: w.sum() - 1.0}
@@ -147,7 +154,7 @@ class KStockWeightOptimizer:
             return {
                 "error": f"최적화 실패: {result.message}",
                 "weights": DEFAULT_WEIGHTS,
-                "n_samples": len(records),
+                "n_samples": n,
                 "applied": False,
             }
 
@@ -155,31 +162,33 @@ class KStockWeightOptimizer:
         w_opt = w_opt / w_opt.sum()
         optimized = {k: round(float(w_opt[i]), 4) for i, k in enumerate(COMPONENT_KEYS)}
 
-        # 성과 측정
-        scores_opt = X @ w_opt
-        threshold = np.percentile(scores_opt, 50)
-        mask = scores_opt >= threshold
-        win_rate = float((y[mask] > 0).mean()) if mask.sum() > 0 else 0.5
+        def _win_rate(Xs: "np.ndarray", ys: "np.ndarray", w: "np.ndarray") -> float:
+            sc = Xs @ w
+            m = sc >= np.percentile(sc, 50)
+            return float((ys[m] > 0).mean()) if m.sum() > 0 else 0.5
 
-        scores_def = X @ w0
-        threshold_def = np.percentile(scores_def, 50)
-        mask_def = scores_def >= threshold_def
-        win_rate_def = float((y[mask_def] > 0).mean()) if mask_def.sum() > 0 else 0.5
+        # in-sample(참고) + held-out OOS(핵심 판정)
+        is_impr = round(_win_rate(X_tr, y_tr, w_opt) - _win_rate(X_tr, y_tr, w0), 4)
+        oos_win, oos_def = _win_rate(X_te, y_te, w_opt), _win_rate(X_te, y_te, w0)
+        oos_impr = round(oos_win - oos_def, 4)
 
-        improvement = round(win_rate - win_rate_def, 4)
-
-        applied = improvement >= 0
+        # [P6] 게이트: held-out 개선이 MIN_IMPROVEMENT 이상 AND in-sample도 개선일 때만 적용.
+        applied = bool(oos_impr >= MIN_IMPROVEMENT and is_impr >= 0)
         if applied:
             self._apply_to_scorer(optimized)
 
         output = {
             "weights": optimized,
             "default_weights": DEFAULT_WEIGHTS,
-            "n_samples": len(records),
+            "n_samples": n,
+            "n_train": split,
+            "n_oos": len(y_te),
             "horizon_minutes": self.horizon,
-            "expected_win_rate": round(win_rate, 4),
-            "default_win_rate": round(win_rate_def, 4),
-            "improvement": improvement,
+            "expected_win_rate": round(oos_win, 4),    # OOS 기준 보고
+            "default_win_rate": round(oos_def, 4),
+            "in_sample_improvement": is_impr,
+            "improvement": oos_impr,                   # = held-out 개선(핵심)
+            "min_improvement": MIN_IMPROVEMENT,
             "applied": applied,
             "optimized_at": int(time.time()),
             "asset_label": self.asset_label,

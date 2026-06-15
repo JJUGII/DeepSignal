@@ -46,6 +46,12 @@ class SignalScorer:
 
         news·macro 중 일부가 None이면 해당 가중치를 제외하고 나머지만으로 정규화한다.
         둘 다 없으면 technical만 반환한다.
+
+        [P1 정정] macro_score는 한 run에서 모든 종목에 동일한 시장 전역값이다. 상수 가산은
+        순위 보존(order-preserving)이라 종목 간 *랭킹을 해치지 않으며*, 매수 컷오프를 균일
+        이동시키는 크루드 시장필터로만 작동한다(초기 진단의 "랭킹 잠식"은 부정확했음).
+        risk-off 판정의 권한은 이제 DM6 레짐 마스터게이트(deepsignal/risk/regime_gate.py)가
+        갖는다 — macro 항은 그 보조 필터로 남겨둔다(이중계상이나 순위무해라 가중 유지).
         """
         sw = self.conditions.score
         if technical_score is None:
