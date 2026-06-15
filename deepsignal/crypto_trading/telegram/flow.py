@@ -187,6 +187,30 @@ def telegram_send_message(
 ) -> dict[str, Any]:
     if not cfg.bot_token or not cfg.allowed_chat_id:
         return {"ok": False, "error": "telegram not configured"}
+    # 접수 알림 중복 억제: 동일 '접수' 메시지가 쿨다운(기본 10분) 내 반복되면 생략.
+    # 미체결 부분매도가 매 틱 같은 주문을 재접수하며 도배되는 것 방지(체결 결과는 별도 메시지).
+    if "접수" in text:
+        try:
+            import hashlib
+            import os as _os
+            import time as _t
+            from pathlib import Path as _P
+            sig = hashlib.md5(text.encode("utf-8")).hexdigest()[:12]
+            try:
+                cd = float(_os.environ.get("CRYPTO_SUBMIT_NOTIFY_COOLDOWN_MIN", "10") or 10) * 60
+            except ValueError:
+                cd = 600.0
+            sp = _P(str(getattr(cfg, "output_dir", "outputs") or "outputs")) / "CRYPTO_SUBMIT_NOTIFY_DEDUP.json"
+            now = _t.time()
+            seen = json.loads(sp.read_text(encoding="utf-8")) if sp.exists() else {}
+            if now - float(seen.get(sig) or 0) < cd:
+                return {"ok": True, "status": "suppressed_duplicate_submit"}
+            seen[sig] = now
+            seen = {k: v for k, v in seen.items() if now - float(v) < 86400}
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            sp.write_text(json.dumps(seen, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
     url = f"https://api.telegram.org/bot{cfg.bot_token}/sendMessage"
     payload: dict[str, Any] = {
         "chat_id": cfg.allowed_chat_id,
