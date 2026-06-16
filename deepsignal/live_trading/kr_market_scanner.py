@@ -149,14 +149,16 @@ def _sweet_band() -> tuple[float, float]:
     """매수 가능한 '돌파 초입' 등락률 밴드 — 이 구간이 점수 정점.
 
     이 위로 갈수록 단기과열·투자경고 지정 위험이 커져(=KIS 매수제한·단일가매매로
-    못 사고·꼭지) 감점한다. 기본 +3~10%. KR_SCANNER_SWEET_MIN/MAX_PCT로 조정.
+    못 사고·꼭지) 감점한다. 기본 +5~10% — 60건 실측에서 이 구간이 다음날 +1.86%·
+    승률 77%로 최고였고, <5%는 −0.16%(노이즈)·+15%↑는 −4.68%(과열사망)였다.
+    KR_SCANNER_SWEET_MIN/MAX_PCT로 조정.
     """
     try:
-        lo = float(os.environ.get("KR_SCANNER_SWEET_MIN_PCT", "3.0") or 3.0)
+        lo = float(os.environ.get("KR_SCANNER_SWEET_MIN_PCT", "5.0") or 5.0)
         hi = float(os.environ.get("KR_SCANNER_SWEET_MAX_PCT", "10.0") or 10.0)
     except ValueError:
-        lo, hi = 3.0, 10.0
-    return (lo, hi) if hi > lo else (3.0, 10.0)
+        lo, hi = 5.0, 10.0
+    return (lo, hi) if hi > lo else (5.0, 10.0)
 
 
 def _score(m: dict[str, Any]) -> float:
