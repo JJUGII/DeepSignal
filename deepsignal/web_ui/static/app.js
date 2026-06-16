@@ -1712,7 +1712,8 @@ async function loadDashboard() {
   const kisTotal = d.stock_total_equity > 0
     ? d.stock_total_equity
     : stockVal + (d.stock_balance_krw || 0);
-  const totalAsset = coinVal + krwTotal + kisTotal;
+  const overseasVal = d.overseas_total_krw || 0;   // 해외(미국주식+USD현금) 원화환산
+  const totalAsset = coinVal + krwTotal + kisTotal + overseasVal;
 
   const runColor = r.running ? (r.paused ? 'warning' : 'ok') : 'danger';
   const runState2 = r.running ? (r.paused ? 'paused' : 'running') : 'stopped';
@@ -5388,7 +5389,8 @@ function updateSidebarAccount(d, approval) {
   const kisTotal = d.stock_total_equity > 0
     ? d.stock_total_equity
     : stockVal + (d.stock_balance_krw || 0);
-  const totalAsset = coinVal + krwTotal + kisTotal;
+  const overseasVal = d.overseas_total_krw || 0;   // 해외(미국주식+USD현금) 원화환산
+  const totalAsset = coinVal + krwTotal + kisTotal + overseasVal;
 
   // ── 구버전 사이드바 위젯 (하위 호환) ──
   const widget = document.getElementById('sidebar-account-widget');

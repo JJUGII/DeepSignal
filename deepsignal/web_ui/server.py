@@ -1015,15 +1015,21 @@ async def api_status() -> JSONResponse:
     runner = get_runner_status(_OUTPUT_DIR)
     # 코인(Upbit) + 주식(KIS) 동시 조회
     # KIS는 _get_all_stock_data()로 단일 API 호출 → rate-limit 방지
-    (upbit_snap, bithumb_snap), all_stock = await asyncio.gather(
+    (upbit_snap, bithumb_snap), all_stock, overseas = await asyncio.gather(
         asyncio.gather(
             asyncio.to_thread(_get_crypto_exchange_snapshot, "upbit"),
             asyncio.to_thread(_get_crypto_exchange_snapshot, "bithumb"),
         ),
         asyncio.to_thread(_get_all_stock_data),
+        asyncio.to_thread(_get_overseas_positions_cached),
     )
     crypto_exchanges = {"upbit": upbit_snap, "bithumb": bithumb_snap}
     stock_holdings, stock_balance = all_stock
+    # 해외 미국주식 평가(KIS 공식 원화) — 총자산 합산용. 매수가능USD(통합증거금)는
+    # 국내 예수금과 이중계상되므로 쓰지 않고, KIS가 원화로 준 ovrs_stck_evlu_amt1만 더한다.
+    overseas_total_krw = 0.0
+    if isinstance(overseas, dict) and not overseas.get("error"):
+        overseas_total_krw = float(overseas.get("overseas_holdings_krw") or 0)
     last_plan = _get_last_plan()
     thresholds = _read_json(_OUTPUT_DIR / "CRYPTO_ACTIVE_THRESHOLDS.json")
 
@@ -1047,6 +1053,7 @@ async def api_status() -> JSONResponse:
         "stock_balance_krw": stock_balance.get("balance", 0) if isinstance(stock_balance, dict) else stock_balance,
         "stock_withdrawable_krw": stock_balance.get("withdrawable", 0) if isinstance(stock_balance, dict) else stock_balance,
         "stock_total_equity": stock_balance.get("total_equity", 0) if isinstance(stock_balance, dict) else 0,
+        "overseas_total_krw": overseas_total_krw,
         "last_plan": last_plan,
         "thresholds": {
             "take_profit_pct": thresholds.get("take_profit_pct"),
@@ -3262,7 +3269,12 @@ def _get_overseas_positions() -> dict:
         cfg = load_kis_config_from_env(load_dotenv_file=False)
         broker = KISBroker(cfg)
 
-        # 환율 (CTRP6548R output2 — 실패 시 마지막 성공값)
+        # 환율 + KIS 공식 자산금액 (CTRP6548R output2 — 실패 시 마지막 성공값)
+        # ovrs_stck_evlu_amt1 = 해외주식 평가(원화), tot_asst_amt = KIS 공식 총자산.
+        # 매수가능USD(통합증거금)는 KRW 매수여력을 USD로 환산한 값이라 총자산엔 쓰면
+        # 안 됨(국내 예수금과 이중계상). 순자산은 KIS가 원화로 직접 준 이 값을 쓴다.
+        ovrs_holdings_krw = 0.0
+        tot_asst_amt = 0.0
         try:
             rate_resp = _req.get(
                 f"{cfg.base_url}/uapi/overseas-stock/v1/trading/inquire-present-balance",
@@ -3276,8 +3288,14 @@ def _get_overseas_positions() -> dict:
                 timeout=8,
             )
             rate_body = rate_resp.json() if rate_resp.status_code == 200 else {}
-            _raw_rate = float((rate_body.get("output2") or [{}])[0].get("frst_bltn_exrt") or 0)
+            _o2_rows = rate_body.get("output2") or []
+            if isinstance(_o2_rows, dict):
+                _o2_rows = [_o2_rows]
+            _raw_rate = float((_o2_rows or [{}])[0].get("frst_bltn_exrt") or 0)
             usd_rate = _cached_usd_rate(_raw_rate)
+            for _row in _o2_rows:
+                ovrs_holdings_krw = float(_row.get("ovrs_stck_evlu_amt1") or ovrs_holdings_krw)
+                tot_asst_amt = float(_row.get("tot_asst_amt") or tot_asst_amt)
         except Exception:
             usd_rate = _cached_usd_rate()
 
@@ -3335,12 +3353,34 @@ def _get_overseas_positions() -> dict:
             "cash_usd":             round(cash_usd, 2),
             "cash_krw":             round(cash_usd * usd_rate, 0),
             "usd_rate":             usd_rate,
+            # KIS 공식 원화 평가(총자산 합산용 — 이중계상 없음)
+            "overseas_holdings_krw": round(ovrs_holdings_krw, 0),
+            "tot_asst_amt":          round(tot_asst_amt, 0),
             "kis_env":              "live" if cfg.is_live else "paper",
         }
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("해외주식 포지션 조회 실패: %s", exc)
         return {"exists": False, "error": str(exc), "positions": []}
+
+
+# 총자산 합산용 해외 잔고 — 매 폴링마다 KIS 호출하면 rate-limit 위험이라 TTL 캐시
+_overseas_value_cache: dict[str, Any] = {"ts": 0.0, "data": None}
+
+
+def _get_overseas_positions_cached(ttl: float = 45.0) -> dict:
+    import time as _t
+    now = _t.monotonic()
+    cached = _overseas_value_cache.get("data")
+    if cached is not None and now - float(_overseas_value_cache.get("ts") or 0) < ttl:
+        return cached
+    data = _get_overseas_positions()
+    if isinstance(data, dict) and not data.get("error"):
+        _overseas_value_cache["data"] = data
+        _overseas_value_cache["ts"] = now
+        return data
+    # 조회 실패 시 직전 성공값이 있으면 그걸 유지(총자산이 깜빡이며 줄어들지 않게)
+    return cached if cached is not None else data
 
 
 @app.get("/api/overseas/positions")
