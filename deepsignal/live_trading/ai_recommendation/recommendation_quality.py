@@ -459,10 +459,47 @@ def apply_recommendation_quality_gates(
             )
         staged.append(base)
 
-    return apply_portfolio_risk_gates(
+    risk_gated = apply_portfolio_risk_gates(
         staged,
         account=account,
         prices_by_day=prices_by_day,
         latest_day=latest_day,
         config=config,
     )
+    return apply_news_catalyst_gate(risk_gated, config=config)
+
+
+def apply_news_catalyst_gate(
+    recs: list[RecommendationResult], *, config: RecommendationConfig
+) -> list[RecommendationResult]:
+    """[뉴스촉매] 신선한 강한 악재가 있는 종목의 BUY를 차단(방어).
+
+    env NEWS_CATALYST_GATE_ENABLED=true 일 때만 작동(기본 OFF — 검증 전 실거래 무영향).
+    polarity<=-0.5 & strength>=0.5(강한 신선 악재)면 매수 제외. 호재는 차단 안 함(보수적).
+    news_score는 LLM 촉매 파이프라인(news_scores 테이블)이 채운다.
+    """
+    import os as _os
+    if _os.environ.get("NEWS_CATALYST_GATE_ENABLED", "false").strip().lower() not in ("1", "true", "yes", "on"):
+        return recs
+    try:
+        from deepsignal.ai.news_catalyst_pipeline import latest_news_score
+    except Exception:
+        return recs
+    out: list[RecommendationResult] = []
+    for rec in recs:
+        if rec.action in {"BUY", "INCREASE"} and rec.allowed_for_plan:
+            try:
+                ns = latest_news_score(rec.symbol)
+            except Exception:
+                ns = None
+            if ns and float(ns.get("polarity") or 0) <= -0.5 and float(ns.get("strength") or 0) >= 0.5:
+                blocked = sorted(set(list(rec.blocked_reasons or []) + ["news_negative_catalyst"]))
+                gates = dict(rec.quality_gates or {})
+                gates["news_catalyst"] = "blocked"
+                out.append(replace(
+                    rec, allowed_for_plan=False, blocked_reasons=blocked, quality_gates=gates,
+                    risk_notes=list(rec.risk_notes) + [f"뉴스 악재 차단: {ns.get('reason') or ''}"],
+                ))
+                continue
+        out.append(rec)
+    return out
