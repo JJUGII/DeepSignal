@@ -153,6 +153,20 @@ def _sweet_band() -> tuple[float, float]:
     승률 77%로 최고였고, <5%는 −0.16%(노이즈)·+15%↑는 −4.68%(과열사망)였다.
     KR_SCANNER_SWEET_MIN/MAX_PCT로 조정.
     """
+    # 적응형: KR_SCANNER_ADAPTIVE=true면 매일 학습된 ADAPTIVE_ENTRY_BAND.json을 읽어
+    # sweet band를 자동 갱신("기준이 매일 바뀜"). 파일/표본 없으면 정적 기본으로 폴백.
+    if os.environ.get("KR_SCANNER_ADAPTIVE", "false").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            p = _Path(os.environ.get("DEEPSIGNAL_OUTPUT_DIR", "outputs")) / "ADAPTIVE_ENTRY_BAND.json"
+            if p.is_file():
+                d = _json.loads(p.read_text())
+                lo, hi = float(d["sweet_min"]), float(d["sweet_max"])
+                if hi > lo:
+                    return (lo, hi)
+        except Exception:
+            pass
     try:
         lo = float(os.environ.get("KR_SCANNER_SWEET_MIN_PCT", "5.0") or 5.0)
         hi = float(os.environ.get("KR_SCANNER_SWEET_MAX_PCT", "10.0") or 10.0)
