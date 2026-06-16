@@ -1036,9 +1036,18 @@ async def api_status() -> JSONResponse:
     from deepsignal.crypto_trading.broker.selection import crypto_broker_label
 
     broker_id = _crypto_broker_id()
-    active_snap = crypto_exchanges.get(broker_id) or upbit_snap
-    holdings = list(active_snap.get("holdings") or [])
-    balance = active_snap.get("balance") or {"available": 0.0, "total": 0.0}
+    # 코인 자산은 업비트+빗썸 합산 표시. 각 보유에 거래소 태그를 붙이고 잔고는 합산.
+    holdings = []
+    avail_sum = total_sum = 0.0
+    for _ex, _snap in crypto_exchanges.items():
+        for _h in (_snap.get("holdings") or []):
+            _h = dict(_h)
+            _h.setdefault("exchange", _ex)
+            holdings.append(_h)
+        _bal = _snap.get("balance") or {}
+        avail_sum += float(_bal.get("available") or 0)
+        total_sum += float(_bal.get("total") or 0)
+    balance = {"available": avail_sum, "total": total_sum}
 
     return JSONResponse({
         "runner": runner,
@@ -2180,24 +2189,34 @@ def _fetch_crypto_trades(
     broker_id = _crypto_broker_id()
     items: list[dict] = []
 
-    try:
-        broker = _make_broker()
-        for row in fetch_done_orders_from_broker(broker):
-            side_kr = row.get("side", "")
-            if type_filter != "all" and side_kr != type_filter:
-                continue
-            mkt = f"KRW-{row.get('symbol', '')}"
-            sym = str(row.get("symbol") or "")
-            if symbol and symbol.upper() not in (mkt.upper(), sym.upper()):
-                continue
-            created_raw = str(row.get("executed_at") or "")
-            ts_date = created_raw[:10] if created_raw else ""
-            if ts_date and (ts_date < start_dt or ts_date > end_dt):
-                continue
-            items.append(row)
-    except Exception as _e:
+    # 업비트+빗썸 모두 조회해 합산(각 행은 broker 태그 보유). 키 미설정·실패 거래소는 건너뜀.
+    from deepsignal.crypto_trading.broker.selection import SUPPORTED_CRYPTO_BROKERS
+    any_ok = False
+    for _ex in SUPPORTED_CRYPTO_BROKERS:  # ("upbit","bithumb")
+        try:
+            broker = _make_broker(_ex)
+            for row in fetch_done_orders_from_broker(broker):
+                row.setdefault("broker", _ex)
+                side_kr = row.get("side", "")
+                if type_filter != "all" and side_kr != type_filter:
+                    continue
+                mkt = f"KRW-{row.get('symbol', '')}"
+                sym = str(row.get("symbol") or "")
+                if symbol and symbol.upper() not in (mkt.upper(), sym.upper()):
+                    continue
+                created_raw = str(row.get("executed_at") or "")
+                ts_date = created_raw[:10] if created_raw else ""
+                if ts_date and (ts_date < start_dt or ts_date > end_dt):
+                    continue
+                items.append(row)
+            any_ok = True
+        except Exception as _e:
+            import logging
+            logging.getLogger(__name__).debug("%s orders API 실패: %s", _ex, _e)
+
+    if not any_ok and not items:
         import logging
-        logging.getLogger(__name__).debug("%s orders API 실패, 로컬 폴백: %s", broker_id, _e)
+        logging.getLogger(__name__).debug("양 거래소 orders API 실패, 로컬 폴백")
 
         slip_map = _build_slip_map()
         patterns = [str(_OUTPUT_DIR / "crypto_telegram_approval_audit_*.json")]
