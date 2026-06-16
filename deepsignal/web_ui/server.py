@@ -1398,16 +1398,26 @@ async def api_trade_history(limit: int = 30) -> JSONResponse:
     audit_files: list[str] = []
     for pat in patterns:
         audit_files.extend(_glob.glob(pat))
-    audit_files.sort()
+    # 파일명 타임스탬프(YYYYMMDD_HHMMSS)로 정렬 — 전체경로 알파벳 정렬은 prefix별로
+    # 묶여(crypto_ < live_ < telegram_) tail 슬라이스에서 코인 거래가 통째로 빠지던 버그.
+    import re as _re
+
+    def _audit_ts(p: str) -> str:
+        m = _re.search(r"(\d{8}_\d{6})", os.path.basename(p))
+        return m.group(1) if m else ""
+
+    audit_files.sort(key=_audit_ts)
 
     trades: list[dict] = []
-    for fpath in audit_files[-(limit * 4):]:  # 여유분 확보 후 자름
+    for fpath in reversed(audit_files):  # 최신 파일부터, limit개 모이면 중단
+        if len(trades) >= limit:
+            break
         try:
             raw = json.loads(Path(fpath).read_text(encoding="utf-8"))
         except Exception:
             continue
         plan = raw.get("plan") or {}
-        if not plan.get("market"):  # plan 없는 간이 audit 파일 건너뜀
+        if not str(plan.get("market") or "").startswith("KRW-"):  # 코인 거래만(국내/해외 제외)
             continue
         result = raw.get("result") or {}
         market = plan.get("market") or ""
@@ -1447,7 +1457,7 @@ async def api_trade_history(limit: int = 30) -> JSONResponse:
             "broker": str(plan.get("broker") or _crypto_broker_id()).lower(),
         })
 
-    trades.reverse()  # 최신 순
+    # 이미 최신 파일부터 수집 → 최신 순. (예전: 알파벳 정렬+tail로 코인 0건이던 버그 수정)
     return JSONResponse({"trades": trades[:limit], "total": len(audit_files)})
 
 
