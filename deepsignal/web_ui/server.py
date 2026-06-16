@@ -43,14 +43,19 @@ _STATIC = _HERE / "static"
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    from dotenv import load_dotenv
+
+    load_dotenv(str(_ENV_PATH), override=False)
     from deepsignal.web_ui.listing_watch_loop import listing_watch_loop
     from deepsignal.web_ui.state_watcher import watch_loop
+    from deepsignal.web_ui.whale_watch_loop import whale_watch_loop
     task = asyncio.create_task(watch_loop(_OUTPUT_DIR, _event_bus))
     listing_task = asyncio.create_task(listing_watch_loop(_OUTPUT_DIR, _event_bus))
+    whale_task = asyncio.create_task(whale_watch_loop(_OUTPUT_DIR, _event_bus))
     try:
         yield
     finally:
-        for t in (task, listing_task):
+        for t in (task, listing_task, whale_task):
             t.cancel()
             try:
                 await t
@@ -1233,6 +1238,24 @@ async def api_listing_watch(refresh: bool = False) -> JSONResponse:
 @app.post("/api/listing-watch/refresh")
 async def api_listing_watch_refresh() -> JSONResponse:
     return await api_listing_watch(refresh=True)
+
+
+@app.get("/api/whale-trades")
+async def api_whale_trades() -> JSONResponse:
+    """Recent large KRW trades (live buffer from WebSocket)."""
+    from deepsignal.crypto_trading.whale.buffer import get_whale_buffer
+    from deepsignal.crypto_trading.whale.config import WhaleWatchConfig
+
+    cfg = WhaleWatchConfig.from_env()
+    snap = get_whale_buffer().snapshot()
+    snap["config"] = {
+        "enabled": cfg.enabled,
+        "min_krw": cfg.min_krw,
+        "vol_surge_ratio": cfg.vol_surge_ratio,
+        "exchanges": list(cfg.exchanges),
+        "exclude_markets": sorted(cfg.exclude_markets),
+    }
+    return JSONResponse(snap)
 
 
 @app.get("/api/sizing")
@@ -4570,6 +4593,9 @@ def run_web_ui(
     _OUTPUT_DIR = Path(output_dir).resolve()
     _PROJECT_ROOT = Path(project_root).resolve()
     _ENV_PATH = Path(env_path).resolve()
+
+    from dotenv import load_dotenv
+    load_dotenv(str(_ENV_PATH), override=False)
 
     url = f"http://{host}:{port}"
     print(f"\n  DeepSignal Web UI → {url}\n  Ctrl+C 로 종료\n", flush=True)
