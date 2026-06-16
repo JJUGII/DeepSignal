@@ -145,17 +145,38 @@ def scan_kr_movers(broker: Any) -> list[dict[str, Any]]:
     return movers
 
 
-def _score(m: dict[str, Any]) -> float:
-    """급등주 점수 0~100: 등락률 주도 + 거래대금 보너스.
+def _sweet_band() -> tuple[float, float]:
+    """매수 가능한 '돌파 초입' 등락률 밴드 — 이 구간이 점수 정점.
 
-    recommendation 엔진의 매수 문턱(DEEPSIGNAL_STOCK_MIN_SCORE, L10=20)과
-    같은 스케일. 등락률 3%≈40점, 10%≈68점, 20%+≈90점대.
+    이 위로 갈수록 단기과열·투자경고 지정 위험이 커져(=KIS 매수제한·단일가매매로
+    못 사고·꼭지) 감점한다. 기본 +3~10%. KR_SCANNER_SWEET_MIN/MAX_PCT로 조정.
+    """
+    try:
+        lo = float(os.environ.get("KR_SCANNER_SWEET_MIN_PCT", "3.0") or 3.0)
+        hi = float(os.environ.get("KR_SCANNER_SWEET_MAX_PCT", "10.0") or 10.0)
+    except ValueError:
+        lo, hi = 3.0, 10.0
+    return (lo, hi) if hi > lo else (3.0, 10.0)
+
+
+def _score(m: dict[str, Any]) -> float:
+    """돌파 초입(sweet band)에서 정점, 과대상승(단기과열 임박)일수록 감점.
+
+    기존엔 등락률에 단조 비례(+20%가 최고점)라 매번 단기과열 지정 종목이 1등 →
+    KIS 매수제한으로 0매수였다. *살 수 있는* 초입 모멘텀을 상위로 끌어올린다.
+    recommendation 매수 문턱(DEEPSIGNAL_STOCK_MIN_SCORE)과 같은 0~100 스케일.
     """
     chg = float(m.get("change_pct") or 0)
-    base = 28.0 + min(60.0, chg * 4.0)
+    lo, hi = _sweet_band()
+    if chg < lo:
+        base = 45.0 + 30.0 * (chg / lo)                 # 0→45, lo→75 (모멘텀 진입 중)
+    elif chg <= hi:
+        base = 78.0 + 12.0 * (chg - lo) / (hi - lo)      # lo→78, hi→90 (정점)
+    else:
+        base = 90.0 - min(58.0, (chg - hi) * 5.0)        # 과대상승 급감 (+20%≈40)
     turn = float(m.get("turnover_krw") or 0)
     bonus = 6.0 if turn >= 5e10 else (3.0 if turn >= 1e10 else 0.0)
-    return round(min(97.0, base + bonus), 1)
+    return round(max(10.0, min(97.0, base + bonus)), 1)
 
 
 def record_mover_signals(movers: list[dict[str, Any]], *, db_path: str | None = None,
@@ -177,11 +198,18 @@ def record_mover_signals(movers: list[dict[str, Any]], *, db_path: str | None = 
         "  raw_json = CASE WHEN excluded.final_score >= final_score THEN excluded.raw_json ELSE raw_json END"
     )
     n_ok = n_fail = 0
+    # 기록은 등락률 순이 아니라 *점수 순*(돌파 초입 정점)으로 — 살 수 있는 종목이
+    # 과대상승주에 밀려 상위 N 컷오프에서 잘리지 않게 한다.
+    movers = sorted(movers, key=_score, reverse=True)
     with sqlite3.connect(str(Path(path).expanduser().resolve())) as conn:
         for m in movers[:max_records]:
             try:
                 sc = _score(m)
-                conf = round(min(0.9, 0.4 + float(m["change_pct"]) / 40.0), 2)
+                # 신뢰도도 초입에서 높고 과대상승(단기과열 임박)이면 낮춘다
+                _chg = float(m["change_pct"])
+                _lo, _hi = _sweet_band()
+                conf = round(min(0.85, 0.45 + _chg / 30.0) if _chg <= _hi
+                             else max(0.30, 0.85 - (_chg - _hi) / 25.0), 2)
                 reason = (f"전시장 급등 스캔: {m['name']} {m['change_pct']:+.1f}% "
                           f"거래대금 {m['turnover_krw']/1e8:.0f}억 ({m['rank_src']})")
                 conn.execute(sql, (m["symbol"], today, sc, sc, conf, reason,
