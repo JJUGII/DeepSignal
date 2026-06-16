@@ -2204,7 +2204,7 @@ def _fetch_crypto_trades(
         audit_files: list[str] = []
         for pat in patterns:
             audit_files.extend(_glob.glob(pat))
-        audit_files.sort()
+        audit_files.sort(key=_audit_file_ts)  # 시간순(파일명 타임스탬프) — prefix 누락 방지
         items = trades_from_local_audits(
             audit_files,
             slip_map=slip_map,
@@ -2216,6 +2216,15 @@ def _fetch_crypto_trades(
         )
 
     return items
+
+
+def _audit_file_ts(path: str) -> str:
+    """audit 파일명에서 타임스탬프(YYYYMMDD_HHMMSS) 추출 — prefix 무관 시간순 정렬용.
+    전체경로 알파벳 정렬은 prefix(crypto_<live_<telegram_)별로 묶여 한 종류가
+    통째로 누락되던 버그 방지."""
+    import re as _re
+    m = _re.search(r"(\d{8}_\d{6})", os.path.basename(path))
+    return m.group(1) if m else ""
 
 
 def _build_slip_map() -> dict:

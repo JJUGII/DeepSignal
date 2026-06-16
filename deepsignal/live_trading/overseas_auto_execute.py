@@ -14,10 +14,42 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# 라이브 USD/KRW 환율 TTL 캐시 — 매 틱 KIS 호출 막으면서(병목) 하드코딩(1350) 제거
+_USD_RATE_CACHE: dict[str, float] = {"ts": 0.0, "rate": 1350.0}
+
+
+def live_usd_rate(broker: Any = None, cfg: Any = None, *, ttl: float = 600.0) -> float:
+    """라이브 USD/KRW 환율 (무료 공개 FX, 키 불필요). 10분 캐시, 실패 시 마지막값/env/1350.
+
+    KIS 잔고 API는 환율을 안 줘서(기존 1350 하드코딩 = 실측 대비 ~11% 오차) 공개 FX를 쓴다.
+    env USD_KRW_RATE_OVERRIDE 있으면 그 값 우선. broker/cfg 인자는 호환용(미사용)."""
+    override = (os.environ.get("USD_KRW_RATE_OVERRIDE") or "").strip()
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            pass
+    now = time.monotonic()
+    if now - float(_USD_RATE_CACHE.get("ts") or 0) < ttl and _USD_RATE_CACHE.get("rate"):
+        return float(_USD_RATE_CACHE["rate"])
+    import requests as _rq
+    for url in ("https://open.er-api.com/v6/latest/USD", "https://api.frankfurter.app/latest?from=USD&to=KRW"):
+        try:
+            d = _rq.get(url, timeout=8).json()
+            rate = float((d.get("rates") or {}).get("KRW") or 0)
+            if rate > 500:   # 정상 범위 (won 환율)
+                _USD_RATE_CACHE["rate"] = rate
+                _USD_RATE_CACHE["ts"] = now
+                return rate
+        except Exception:
+            continue
+    return float(_USD_RATE_CACHE.get("rate") or 1350.0)
 from zoneinfo import ZoneInfo
 
 _KST = ZoneInfo("Asia/Seoul")
@@ -414,7 +446,9 @@ def run_overseas_auto_tick(output_dir: str | Path, *, tg_notify=None,
         try:
             from deepsignal.live_trading.broker.kis_broker import KISBroker
             from deepsignal.live_trading.broker.kis_config import load_kis_config_from_env
-            _br = KISBroker(load_kis_config_from_env(), safe_mode=True)
+            _cfg = load_kis_config_from_env()
+            _br = KISBroker(_cfg, safe_mode=True)
+            usd_rate = live_usd_rate(_br, _cfg)   # 하드코딩 1350 → 라이브 환율(캐시)
             _bal = _br.get_overseas_cash_balance()
             _avail = float(_bal.cash) if _bal.cash else None
         except Exception:
