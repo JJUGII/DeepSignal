@@ -119,15 +119,15 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 
 def _eff_sl_pct_min() -> float:
-    """손절 하한(가장 깊은 손절, 음수 중 가장 작은 값). 공격성 다이얼의
-    CRYPTO_SL_PCT_MIN 이 있으면 손절 깊이를 줄인다(실측 평균 -2.6% 출혈 교정).
-    '덜 깊게'(0 쪽으로)만 이동 — 더 깊어지는 방향은 무시."""
+    """손절 하한(가장 깊은 손절). 공격성 다이얼 CRYPTO_SL_PCT_MIN이 있으면 그 값을
+    직접 사용 — 얕게(0쪽)뿐 아니라 깊게(완화)도 허용한다. 진단상 -2% 손절이
+    ATR(~3.8%) 이내라 노이즈에 매번 잘려 최대 누수였음 → 완화 필요. 안전 절대하한 -15%."""
     base = float(_CRYPTO.sl_pct_min)
     import os as _o
     ov = _o.environ.get("CRYPTO_SL_PCT_MIN", "").strip()
     if ov:
         try:
-            return max(base, float(ov))
+            return max(-15.0, min(-0.3, float(ov)))  # 직접 적용(깊게/얕게 모두), -15%~-0.3% 클램프
         except ValueError:
             pass
     return base

@@ -325,22 +325,25 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
 
     # 손절 하한(가장 타이트해도 이 값): 공격 체결 단계는 스프레드+수수료보다 넓게.
     # sl_pct_max(=손절 상한, 음수 중 0에 가까운 쪽)를 더 음수로 밀어 타이트 손절 방지.
-    _sl_floor = {9: -1.3, 10: -1.5}
+    # 손절 타이트 하한(0에 가까운 쪽). 너무 타이트하면 노이즈에 잘림 → 넓게.
+    _sl_floor = {9: -2.0, 10: -2.5}
     if _lvl in _sl_floor:
         e["CRYPTO_SL_PCT_MAX"] = str(_sl_floor[_lvl])
     else:
         e.pop("CRYPTO_SL_PCT_MAX", None)
-    # 손익비 교정(실측 이익+0.67 vs 손실-2.63 = 1:4 역전):
-    # ① 손절 최대깊이 -3.0% → -2.0%(9~10) — 손실은 짧게
-    # ② 트레일링 폭 0.8% → 2.0/2.5%(9~10) — 이익은 길게 달리기
+    # 손절 완화(진단 근거): -2% 손절이 ATR(~3.8%) 이내라 노이즈에 19건 잘려 -38%
+    # 최대 누수였고, 오래 들면(1일+) +38%·승률56%. → 손절을 ATR 밖(-4%)으로 넓혀
+    # 노이즈 컷을 줄이고 승자에게 여유를 준다. 트레일링(이익 보존)·타임스톱 완화는 유지.
     if _lvl >= 9:
-        e["CRYPTO_SL_PCT_MIN"] = "-2.0"
+        e["CRYPTO_SL_PCT_MIN"] = "-4.0" if _lvl >= 10 else "-3.5"
         e["CRYPTO_TRAILING_STOP_PCT"] = "2.5" if _lvl >= 10 else "2.0"
-        # 타임스톱 완화: 5분→15분 — 짧으면 왕복비용(~0.4%)만 확정하고 나가는 churn
         e["CRYPTO_TIME_STOP_MINUTES"] = "15"
+        # 손절 완화 보완: 같은 코인 당일 2회 손절 시 재매수 차단(진짜 하락 코인 반복출혈 방지)
+        e["CRYPTO_MAX_STOP_LOSS_PER_MARKET_PER_DAY"] = "2"
     else:
         e.pop("CRYPTO_SL_PCT_MIN", None)
         e.pop("CRYPTO_TRAILING_STOP_PCT", None)
+        e.pop("CRYPTO_MAX_STOP_LOSS_PER_MARKET_PER_DAY", None)
         e.pop("CRYPTO_TIME_STOP_MINUTES", None)
 
     # ── 주식 익절/손절도 단계 연동 (높을수록 익절 목표↑=수익 달리기, 손절폭↑=여유) ──
