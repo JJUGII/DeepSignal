@@ -147,6 +147,21 @@ def _eff_sl_pct_max() -> float:
     return base
 
 
+def _eff_tp_pct_max() -> float:
+    """익절 상한. CRYPTO_TP_PCT_MAX 가 있으면 그 값으로 익절 천장을 직접 조정.
+    실측: 머리(head)가 +2% 부근(70% 도달)인데 동적 TP가 4%까지 올라 팝을 놓치고
+    되돌림 맞음 → 천장을 낮춰 빈번한 +2% 팝을 확실히 수확한다."""
+    base = float(_CRYPTO.tp_pct_max)
+    import os as _o
+    ov = _o.environ.get("CRYPTO_TP_PCT_MAX", "").strip()
+    if ov:
+        try:
+            return max(0.5, float(ov))
+        except ValueError:
+            pass
+    return base
+
+
 def portfolio_totals(broker: UpbitBroker) -> tuple[float, float, float]:
     """total_krw, available_krw, holdings_valuation_krw."""
     try:
@@ -199,7 +214,7 @@ def merge_tp_sl(
                 tp = _clamp(
                     float(tuned.take_profit_pct),
                     float(_CRYPTO.tp_pct_min),
-                    float(_CRYPTO.tp_pct_max),
+                    _eff_tp_pct_max(),
                 )
                 sl = _clamp(
                     float(tuned.stop_loss_pct),
@@ -211,7 +226,7 @@ def merge_tp_sl(
             tp = _clamp(
                 float(tuned.take_profit_pct),
                 float(_CRYPTO.tp_pct_min),
-                float(_CRYPTO.tp_pct_max),
+                _eff_tp_pct_max(),
             )
             sl = _clamp(
                 float(tuned.stop_loss_pct),
@@ -230,7 +245,7 @@ def merge_tp_sl(
     if dynamic is not None:
         tp_d, sl_d, src_d = dynamic
         # 기존 밴드 내로 클램프 (tp: 1%~4%, sl: -3%~-0.8%)
-        tp = _clamp(tp_d, float(_CRYPTO.tp_pct_min), float(_CRYPTO.tp_pct_max))
+        tp = _clamp(tp_d, float(_CRYPTO.tp_pct_min), _eff_tp_pct_max())
         sl = _clamp(sl_d, _eff_sl_pct_min(), _eff_sl_pct_max())
         source = src_d
 
@@ -269,7 +284,7 @@ def _tp_sl_from_atr(atr_pct: float) -> tuple[float, float, str]:
     tp = _clamp(
         float(atr_pct) * float(_CRYPTO.atr_tp_multiplier),
         float(_CRYPTO.tp_pct_min),
-        float(_CRYPTO.tp_pct_max),
+        _eff_tp_pct_max(),
     )
     sl = -_clamp(
         float(atr_pct) * float(_CRYPTO.atr_sl_multiplier),

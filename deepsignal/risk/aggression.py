@@ -340,6 +340,9 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
         e["CRYPTO_TIME_STOP_MINUTES"] = "15"
         # 손절 완화 보완: 같은 코인 당일 2회 손절 시 재매수 차단(진짜 하락 코인 반복출혈 방지)
         e["CRYPTO_MAX_STOP_LOSS_PER_MARKET_PER_DAY"] = "2"
+        # 익절 천장 ↓: 실측 머리(head)는 +2% 부근(70% 도달)인데 동적 TP가 4%까지 올라
+        # 팝을 놓치고 -4% 손절로 round-trip("다 손절"의 정체). 천장을 2.5%로 낮춰 수확.
+        e["CRYPTO_TP_PCT_MAX"] = "2.5"
     else:
         e.pop("CRYPTO_SL_PCT_MIN", None)
         e.pop("CRYPTO_TRAILING_STOP_PCT", None)
