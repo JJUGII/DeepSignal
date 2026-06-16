@@ -696,7 +696,25 @@ def build_crypto_recommendation(
         breakdown["scan_mode"] = scan_mode
         if ml_r.lgbm_p is not None:
             breakdown["win_probability"] = ml_r.lgbm_p
-        momentum_bonus = float(t.signed_change_rate or 0.0) * 100.0 * 8.0
+        # 모멘텀 가점 — 실측 승률밴드 기반 sweet-band (단조 선형 → 종형으로 교정).
+        # 과거 `scr×8`은 일간변동이 클수록 가점 → 6~15%(오늘 이미 펌핑)을 과대매수했고
+        # 그 구간 승률 20~26%(평균 -1.9%)로 최대 손실원. 실측: 0~3% 75%승률(+EV),
+        # 6%+ 급감. → 저변동(0~5%)에서 정점, 과대상승·하락은 감점. env로 밴드 조정.
+        import os as _o_band
+        _scr = float(t.signed_change_rate or 0.0) * 100.0  # 일간변동 %
+        try:
+            _mlo = float(_o_band.environ.get("CRYPTO_MOMENTUM_SWEET_MIN_PCT", "1.0") or 1.0)
+            _mhi = float(_o_band.environ.get("CRYPTO_MOMENTUM_SWEET_MAX_PCT", "5.0") or 5.0)
+        except ValueError:
+            _mlo, _mhi = 1.0, 5.0
+        if _scr <= 0:
+            momentum_bonus = _scr * 5.0                       # 하락 감점
+        elif _scr <= _mlo:
+            momentum_bonus = (_scr / _mlo) * 22.0             # 0→mlo: 0~+22 (진입 모멘텀)
+        elif _scr <= _mhi:
+            momentum_bonus = 22.0 + 8.0 * (_scr - _mlo) / (_mhi - _mlo)  # 정점 ~+30
+        else:
+            momentum_bonus = max(-40.0, 30.0 - (_scr - _mhi) * 6.0)  # 과대상승 급감(음수까지)
         ml_bonus = (float(ml_r.lgbm_p or 0) - 0.5) * 40.0 if ml_r.lgbm_p is not None else 0.0
         # 호재 부스트: 긍정 뉴스(상장·파트너십·업그레이드+높은 감성) → 랭킹 우선
         news_rank_bonus = 0.0
