@@ -307,7 +307,12 @@ def _run_crypto_auto_tick_body(
     save_active_sizing_snapshot(cfg.output_dir, sizing)
     result["sizing"] = sizing.to_dict()
 
-    buy_daily_limit = not can_place_order_today(state, max_orders_per_day=cfg.max_orders_per_day)
+    # 일일 매수 횟수 상한: 기본은 sizing 동적값(가용현금÷슬롯). 그러나 이 값은 누적
+    # 매수건수라 churn(사고팔고 재매수)에서 현금이 돌아와도 슬롯이 소진돼 종일 차단된다.
+    # env CRYPTO_MAX_ORDERS_PER_DAY로 오버라이드(0=무제한). 다이얼 L9-10이 0으로 풂.
+    _moe = os.environ.get("CRYPTO_MAX_ORDERS_PER_DAY", "").strip()
+    _max_orders_day = int(float(_moe)) if _moe != "" else int(cfg.max_orders_per_day)
+    buy_daily_limit = not can_place_order_today(state, max_orders_per_day=_max_orders_day)
     # 공격성 다이얼 오버라이드: 일일 매수금액·종목수 한도 (9~10단계는 완화/해제, 0=무제한)
     _cap_krw = float(cfg.max_buy_krw_per_day or 0.0)
     _cap_mkts = int(cfg.max_distinct_buy_markets_per_day or 0)

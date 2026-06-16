@@ -178,12 +178,17 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
     if p.level >= 10:
         e["CRYPTO_MAX_BUY_KRW_PER_DAY"] = "0"
         e["CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY"] = "0"
+        # 일일 매수 '횟수' 상한도 무제한. (기본은 가용현금÷슬롯=~40회로, churn 시
+        # 현금이 돌아와도 슬롯 소진→종일 매수차단되어 L10 도박과 모순됐음)
+        e["CRYPTO_MAX_ORDERS_PER_DAY"] = "0"
     elif p.level == 9:
         e["CRYPTO_MAX_BUY_KRW_PER_DAY"] = "900000"
         e["CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY"] = "15"
+        e["CRYPTO_MAX_ORDERS_PER_DAY"] = "300"
     else:
         e.pop("CRYPTO_MAX_BUY_KRW_PER_DAY", None)
         e.pop("CRYPTO_MAX_DISTINCT_BUY_MARKETS_PER_DAY", None)
+        e.pop("CRYPTO_MAX_ORDERS_PER_DAY", None)
 
     # ── 국내주식·해외주식 일일/주문 캡도 단계 연동 ──────────────────────
     # L9=3배 완화, L10=사실상 무제한(가용현금이 자연 한도). 1~8은 .env 기본 복원.
