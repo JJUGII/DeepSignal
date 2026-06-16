@@ -11,4 +11,10 @@ DEFAULT_RSS_FEEDS: tuple[tuple[str, str], ...] = (
     ("cointelegraph", "https://cointelegraph.com/rss"),
     ("decrypt", "https://decrypt.co/feed"),
     ("cryptoslate", "https://cryptoslate.com/feed/"),
+    # 한국 주식 뉴스 (LLM 촉매 분석용 — 2026-06 실측 생존 피드)
+    # yna_market = 연합 증권/시장(120건, [특징주] 포함), yna_economy = 경제 전반
+    ("yna_market", "https://www.yna.co.kr/rss/market.xml"),
+    ("yna_economy", "https://www.yna.co.kr/rss/economy.xml"),
+    ("hankyung_finance", "https://www.hankyung.com/feed/finance"),
+    ("mk_stock", "https://www.mk.co.kr/rss/30100041/"),
 )
