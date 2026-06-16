@@ -653,7 +653,7 @@ function syncBottomNav(page) {
 }
 
 // ── 라우터 ───────────────────────────────────
-const PAGES = ['dashboard', 'runner', 'settings', 'logs', 'analysis', 'listing', 'trades', 'charts', 'reports'];
+const PAGES = ['dashboard', 'runner', 'settings', 'logs', 'analysis', 'listing', 'whale', 'trades', 'charts', 'reports'];
 let currentPage = 'dashboard';
 
 function navigate(page) {
@@ -692,6 +692,7 @@ function navigate(page) {
   if (page === 'logs')      renderLogs();
   if (page === 'analysis')  renderAnalysis();
   if (page === 'listing')   renderListing();
+  if (page === 'whale')     renderWhale();
   if (page === 'trades')    renderTrades();
   if (page === 'charts')    renderCharts();
   if (page === 'reports')   renderReports();
@@ -5290,6 +5291,131 @@ async function loadListing(forceRefresh) {
   if (btn) btn.addEventListener('click', () => loadListing(true));
 }
 
+// ══════════════════════════════════════════════
+// 고래 체결 (실시간 WebSocket)
+// ══════════════════════════════════════════════
+let whaleTrades = [];
+let whaleStats = {};
+let whaleConfig = {};
+
+function _fmtKrwEok(krw) {
+  const n = Number(krw) || 0;
+  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(2)}억`;
+  if (n >= 10_000) return `${Math.round(n / 10_000)}만`;
+  return n.toLocaleString();
+}
+
+function _whaleSideLabel(side) {
+  if (side === 'buy') return '<span class="badge badge-success">매수</span>';
+  if (side === 'sell') return '<span class="badge badge-danger">매도</span>';
+  return escHtml(side || '-');
+}
+
+function _whaleExchangeLabel(ex) {
+  if (ex === 'upbit') return '<span class="badge badge-info">업비트</span>';
+  if (ex === 'bithumb') return '<span class="badge badge-warning">빗썸</span>';
+  return escHtml(ex || '-');
+}
+
+function _renderWhaleTable() {
+  const tbody = document.getElementById('whale-tbody');
+  if (!tbody) return;
+  if (!whaleTrades.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">기준 금액 이상 체결 대기 중… (Web UI 실행 필요)</td></tr>';
+    return;
+  }
+  tbody.innerHTML = whaleTrades.map(t => {
+    const surge = t.vol_surge
+      ? `<span class="badge badge-warning">급증</span>`
+      : (t.vol_surge_ratio != null ? `${Number(t.vol_surge_ratio).toFixed(1)}x` : '-');
+    const rowStyle = t.vol_surge ? 'background:rgba(255,193,7,0.08)' : '';
+    return `<tr style="${rowStyle}">
+      <td style="font-size:11px;white-space:nowrap">${fmt_time(t.ts)}</td>
+      <td>${_whaleExchangeLabel(t.exchange)}</td>
+      <td><b>${escHtml(t.symbol || t.market || '')}</b><div class="text-muted" style="font-size:10px">${escHtml(t.market || '')}</div></td>
+      <td>${_whaleSideLabel(t.side)}</td>
+      <td style="text-align:right;font-weight:600;color:var(--warning)">${_fmtKrwEok(t.krw)}</td>
+      <td style="text-align:right">${Number(t.price || 0).toLocaleString()}</td>
+      <td style="text-align:right">${surge}</td>
+      <td style="text-align:center">${t.whale_count_5m || 0}</td>
+    </tr>`;
+  }).join('');
+}
+
+function _updateWhaleHeader() {
+  const el = document.getElementById('whale-status');
+  if (!el) return;
+  const min = whaleConfig.min_krw || 30_000_000;
+  const subs = whaleStats.markets_subscribed ?? whaleConfig.markets_subscribed ?? '-';
+  const seen = whaleStats.trades_seen ?? 0;
+  const whales = whaleStats.whales_emitted ?? whaleTrades.length;
+  const last = whaleStats.last_trade_at ? fmt_time(whaleStats.last_trade_at) : '-';
+  el.innerHTML = `기준 <b>${_fmtKrwEok(min)}+</b> · 구독 ${subs}종 · 수신 ${seen.toLocaleString()}건 · 고래 ${whales}건 · 최근 ${last}`;
+}
+
+async function loadWhaleSnapshot() {
+  if (currentPage !== 'whale') return;
+  try {
+    const data = await GET('/api/whale-trades');
+    whaleTrades = data.trades || [];
+    whaleStats = data.stats || {};
+    whaleStats.markets_subscribed = data.markets_subscribed;
+    whaleConfig = data.config || {};
+    _updateWhaleHeader();
+    _renderWhaleTable();
+  } catch (e) {
+    const el = document.getElementById('page-whale');
+    if (el) el.innerHTML = `<div class="page-header"><h1 class="page-title">고래 체결</h1></div>
+      <div class="section-box" style="color:var(--danger)">조회 실패: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function onWhaleTradeEvent(data) {
+  if (!data || data._deleted) return;
+  const idx = whaleTrades.findIndex(t => t.event_id && t.event_id === data.event_id);
+  if (idx >= 0) return;
+  whaleTrades.unshift(data);
+  if (whaleTrades.length > 200) whaleTrades.length = 200;
+  whaleStats.whales_emitted = (whaleStats.whales_emitted || 0) + 1;
+  whaleStats.last_trade_at = data.ts;
+  if (currentPage === 'whale') {
+    _updateWhaleHeader();
+    _renderWhaleTable();
+    if (data.vol_surge) {
+      toast(`고래+급증 ${data.symbol} ${_fmtKrwEok(data.krw)} (${data.side === 'buy' ? '매수' : '매도'})`, 'warning', 6000);
+    }
+  } else if (data.krw >= (whaleConfig.min_krw || 30_000_000) * 1.5 || data.vol_surge) {
+    toast(`고래체결 ${data.symbol} ${_fmtKrwEok(data.krw)}`, 'info', 5000);
+  }
+}
+
+async function renderWhale() {
+  const el = document.getElementById('page-whale');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="page-header">
+      <h1 class="page-title">고래 체결</h1>
+      <div class="page-subtitle">알트코인 대형 체결 실시간 · 업비트·빗썸 · <b>조회 전용</b></div>
+    </div>
+    <div class="section-box" style="margin-bottom:12px;border-left:3px solid var(--accent)">
+      <div id="whale-status" class="text-muted" style="font-size:12px">연결 중…</div>
+      <div class="text-muted" style="font-size:11px;margin-top:6px">BTC·ETH·스테이블 등 메이저 제외 · 24h 거래대금 상위 알트 구독 · 거래량 급증(1분/1h 평균 ${whaleConfig.vol_surge_ratio || 2.5}x↑) 행 강조</div>
+    </div>
+    <div class="section-box">
+      <div class="section-title-row"><span class="section-title">실시간 고래 체결</span></div>
+      <div class="table-wrap" style="overflow-x:auto">
+        <table class="data-table" style="width:100%;font-size:12px">
+          <thead><tr>
+            <th>시각</th><th>거래소</th><th>종목</th><th>방향</th><th>체결금액</th><th>가격</th><th>거래량급증</th><th>5분고래</th>
+          </tr></thead>
+          <tbody id="whale-tbody"><tr><td colspan="8" class="text-muted" style="text-align:center;padding:24px">로딩…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  await loadWhaleSnapshot();
+}
+
 async function renderReports() {
   const el = document.getElementById('page-reports');
   el.innerHTML = '<div class="page-header"><h1 class="page-title">리포트</h1></div><div class="text-muted">목록 로딩 중...</div>';
@@ -5577,6 +5703,10 @@ function handleRealtimeEvent(msg) {
         const top = (data.candidates || [])[0];
         if (top) toast(`상장감시: ${top.display_name || top.market} 점수 ${Math.round(top.anomaly_score)}`, 'warning', 8000);
       }
+      break;
+
+    case 'whale_trade':
+      onWhaleTradeEvent(data);
       break;
   }
 }
