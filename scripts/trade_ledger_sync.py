@@ -16,7 +16,7 @@ from deepsignal.ledger.trade_ledger import sync_all
 def main() -> None:
     r = sync_all()
     print("=== 로컬 매매 장부 동기화 ===")
-    print(f"  신규 기록: 코인 {r['ingested_crypto']} · 국내 {r['ingested_domestic']} · 누적 fill {r['ledger_rows']}건\n")
+    print(f"  신규 기록: 코인 {r['ingested_crypto']} · 국내 {r['ingested_domestic']} · 해외 {r.get('ingested_overseas',0)} · 누적 fill {r['ledger_rows']}건\n")
     print("=== 내 실제 손익 (FIFO 실현) ===")
     print(f"  총 매수금액:   {r['bought_krw']:>12,}원")
     print(f"  총 매도금액:   {r['sold_krw']:>12,}원")

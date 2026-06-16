@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import sqlite3
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+_KST = timezone(timedelta(hours=9))
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS trade_ledger (
@@ -130,6 +132,70 @@ def ingest_kis_domestic(conn, *, days: int = 30) -> int:
     return n
 
 
+def ingest_kis_overseas(conn, *, days: int = 30) -> int:
+    """KIS 해외 기간손익(TTTS3039R) → 청산거래별 매수+매도 leg 기록 (원화 환산값)."""
+    try:
+        import os as _os
+        import requests as _rq
+        for l in open(".env"):
+            if l.strip() and "=" in l and not l.startswith("#"):
+                k, v = l.strip().split("=", 1)
+                _os.environ.setdefault(k, v)
+        from datetime import timedelta
+        from deepsignal.live_trading.kis_config import load_kis_config_from_env
+        from deepsignal.live_trading.broker.kis_broker import KISBroker
+        cfg = load_kis_config_from_env(load_dotenv_file=False)
+        b = KISBroker(cfg)
+        end = datetime.now(_KST)
+        start = end - timedelta(days=days)
+    except Exception:
+        return 0
+    # 페이징은 별도 try — 한 페이지 실패해도 그때까지 받은 행은 보존(예전: 전체 try라 0 반환).
+    fk = nk = ""
+    rows: list[dict] = []
+    for _ in range(10):
+        try:
+            r = _rq.get(f"{cfg.base_url}/uapi/overseas-stock/v1/trading/inquire-period-profit",
+                headers=b._inquire_headers("TTTS3039R"),
+                params={"CANO": cfg.account_no.strip(), "ACNT_PRDT_CD": cfg.account_product_code.strip(),
+                        "OVRS_EXCG_CD": "", "NATN_CD": "", "CRCY_CD": "USD",
+                        "INQR_STRT_DT": start.strftime("%Y%m%d"), "INQR_END_DT": end.strftime("%Y%m%d"),
+                        "PDNO": "", "WCRC_FRCR_DVSN_CD": "02", "CTX_AREA_FK200": fk, "CTX_AREA_NK200": nk},
+                timeout=12)
+            d = r.json()
+        except Exception:
+            break
+        page = d.get("output1") or []
+        rows.extend(page)
+        new_nk = (d.get("ctx_area_nk200") or "").strip()
+        if not page or not new_nk or new_nk == nk:  # 진전 없으면 중단(중복 호출 방지)
+            break
+        fk = (d.get("ctx_area_fk200") or "").strip()
+        nk = new_nk
+    n = 0
+    for x in rows:
+        try:
+            qty = float(x.get("slcl_qty") or 0)
+            buy_krw = float(x.get("frcr_pchs_amt1") or 0)
+            sell_krw = float(x.get("frcr_sll_amt_smtl1") or 0)
+        except (TypeError, ValueError):
+            continue
+        if qty <= 0 or buy_krw <= 0:
+            continue
+        sym = str(x.get("ovrs_pdno") or "")
+        name = str(x.get("ovrs_item_name") or sym)
+        day = str(x.get("trad_day") or "")
+        ts = f"{day[:4]}-{day[4:6]}-{day[6:8]}" if len(day) == 8 else datetime.now().isoformat()
+        eid = f"ovs_{day}_{sym}_{qty}"
+        n += _ins(conn, ts=ts, asset="overseas", broker="kis", symbol=sym, name=name, side="BUY",
+                  qty=qty, price=buy_krw / qty, value_krw=buy_krw, source="kis_overseas", ext_id=eid + "_b")
+        if sell_krw > 0:
+            n += _ins(conn, ts=ts, asset="overseas", broker="kis", symbol=sym, name=name, side="SELL",
+                      qty=qty, price=sell_krw / qty, value_krw=sell_krw, source="kis_overseas", ext_id=eid + "_s")
+    conn.commit()
+    return n
+
+
 # ── 실현손익 (FIFO) ───────────────────────────────────────
 
 def realized_pnl(conn) -> dict[str, Any]:
@@ -186,7 +252,9 @@ def sync_all(*, db_path: str | None = None) -> dict[str, Any]:
     conn = _conn(db_path)
     nc = ingest_crypto(conn)
     nd = ingest_kis_domestic(conn)
+    no = ingest_kis_overseas(conn)
     summary = realized_pnl(conn)
     total = conn.execute("SELECT COUNT(*) FROM trade_ledger").fetchone()[0]
     conn.close()
-    return {"ingested_crypto": nc, "ingested_domestic": nd, "ledger_rows": total, **summary}
+    return {"ingested_crypto": nc, "ingested_domestic": nd, "ingested_overseas": no,
+            "ledger_rows": total, **summary}
