@@ -197,7 +197,14 @@ def can_place_order_today(state: dict[str, Any], *, max_orders_per_day: int) -> 
         return True
     if state.get("last_order_date") != _today_key():
         return True
-    return int(state.get("orders_today", 0) or 0) < int(max_orders_per_day)
+    # 일일 '매수' 한도는 실제 매수 건수로만 센다. orders_today는 매도·먼지 청산
+    # 재시도까지 누적돼(예: 1976) 한도를 거짓으로 넘기던 버그 → buy_count로 교정.
+    buy_counts = state.get("buy_count_by_market_today") or {}
+    try:
+        buys_today = int(sum(int(v or 0) for v in buy_counts.values()))
+    except Exception:
+        buys_today = int(state.get("orders_today", 0) or 0)
+    return buys_today < int(max_orders_per_day)
 
 
 def run_crypto_auto_tick(
