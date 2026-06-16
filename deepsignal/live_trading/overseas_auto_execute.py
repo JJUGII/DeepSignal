@@ -263,9 +263,21 @@ def auto_sell_overseas(
         avg = float(p.avg_price or 0)
         cur = float(p.current_price or 0)
         qty = int(p.quantity or 0)
-        if avg <= 0 or cur <= 0 or qty <= 0:
+        if cur <= 0 or qty <= 0:
             continue
-        pnl_pct = (cur - avg) / avg
+        # 손익률(비율). avg_price가 손상(0)이어도 KIS 공식 평가손익률(evlu_pfls_rt, %)로
+        # 손절·익절을 평가한다. (예전: avg<=0이면 continue로 건너뛰어 손절 보호가 누락됐음)
+        if avg > 0:
+            pnl_pct = (cur - avg) / avg
+        else:
+            _raw = p.raw if isinstance(getattr(p, "raw", None), dict) else {}
+            try:
+                _rt = float(_raw.get("evlu_pfls_rt") or 0)
+            except (TypeError, ValueError):
+                _rt = 0.0
+            if _rt == 0.0:
+                continue  # 평균단가도 KIS 손익률도 없음 → 평가 불가, 스킵
+            pnl_pct = _rt / 100.0  # % → 비율
         ticker = p.symbol.split(":")[-1]
         tpsl = _compute_tpsl_for_position(ticker)
         tp = (tpsl.tp_pct if tpsl else None) or 0.05
