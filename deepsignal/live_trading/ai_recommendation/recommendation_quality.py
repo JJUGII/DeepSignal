@@ -258,6 +258,32 @@ def apply_per_symbol_quality_gates(
     )
 
 
+def _load_restricted_unbuyable(output_dir: str | Path | None) -> set[str]:
+    """[A7→선별단계] 당일 KIS 매수제한 확인 종목(단기과열/투자경고/거래정지)을
+    *집중도 가드 이전*에 미리 제외한다.
+
+    매수제한 필터가 실행단계(order_executor)에만 있으면, 고모멘텀 급등주가 곧
+    단기과열 지정되는 특성상 점수 상위(=매수제한) 종목이 제한된 플랜 슬롯과
+    섹터/상관 집중도 예산을 다 차지한다. 그 결과 정작 살 수 있는 차순위 종목이
+    분산 가드에 막혀, 매번 '종목 매수제한으로 전 종목 제외'로 한 주도 못 사게 된다.
+    선별 단계에서 미리 빼면 살 수 있는 종목에 슬롯이 돌아간다.
+    """
+    if not output_dir:
+        return set()
+    try:
+        import json
+        from datetime import datetime, timezone
+        from datetime import timedelta as _td
+        today = datetime.now(timezone(_td(hours=9))).strftime("%Y-%m-%d")
+        p = Path(str(output_dir)) / "KSTOCK_RESTRICTED_SYMBOLS.json"
+        if not p.is_file():
+            return set()
+        d = json.loads(p.read_text(encoding="utf-8")) or {}
+        return {str(s).upper() for s in (d.get(today) or [])}
+    except Exception:
+        return set()
+
+
 def apply_portfolio_risk_gates(
     recs: list[RecommendationResult],
     *,
@@ -270,6 +296,8 @@ def apply_portfolio_risk_gates(
         return recs
 
     pr_cfg = _default_portfolio_risk_config(config)
+    # [A7→선별] 당일 매수제한 종목은 집중도 예산을 쓰기 전에 제외(살 수 있는 종목에 슬롯 양보)
+    restricted_unbuyable = _load_restricted_unbuyable(config.output_dir)
     latest_prices: dict[str, float] = {}
     if latest_day and latest_day in prices_by_day:
         latest_prices.update(prices_by_day[latest_day])
@@ -283,7 +311,12 @@ def apply_portfolio_risk_gates(
         if sym:
             positions[sym] = int(float(row.get("quantity") or 0))
 
-    buy_recs = [r for r in recs if r.action in {"BUY", "INCREASE"} and r.allowed_for_plan]
+    buy_recs = [
+        r for r in recs
+        if r.action in {"BUY", "INCREASE"}
+        and r.allowed_for_plan
+        and r.symbol.upper() not in restricted_unbuyable
+    ]
     buy_recs.sort(key=lambda r: (r.priority, r.estimated_order_value), reverse=True)
     for rec in buy_recs:
         positions[rec.symbol] = positions.get(rec.symbol, 0) + int(rec.suggested_quantity)
@@ -345,7 +378,21 @@ def apply_portfolio_risk_gates(
     out: list[RecommendationResult] = []
     for rec in recs:
         gates = dict(rec.quality_gates)
-        if rec.symbol in blocked_symbols and rec.action in {"BUY", "INCREASE"}:
+        if rec.symbol.upper() in restricted_unbuyable and rec.action in {"BUY", "INCREASE"}:
+            # [A7→선별] 당일 KIS 매수제한 종목 — 슬롯 차지 못 하게 선별단계에서 제외
+            blocked = list(rec.blocked_reasons)
+            blocked.append("restricted_unbuyable")
+            gates["restricted"] = "blocked"
+            out.append(
+                replace(
+                    rec,
+                    allowed_for_plan=False,
+                    blocked_reasons=sorted(set(blocked)),
+                    quality_gates=gates,
+                    risk_notes=list(rec.risk_notes) + ["매수제한(단기과열/투자경고/거래정지): 선별 제외"],
+                )
+            )
+        elif rec.symbol in blocked_symbols and rec.action in {"BUY", "INCREASE"}:
             blocked = list(rec.blocked_reasons)
             blocked.append("portfolio_risk_concentration")
             gates["portfolio_risk"] = "blocked"
