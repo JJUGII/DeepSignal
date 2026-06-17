@@ -35,7 +35,8 @@ def analyze_crypto_health(*, crypto_db: str = "outputs/crypto_trades.db", lookba
         return {"error": "crypto_trades.db 없음"}
     c = sqlite3.connect(str(p.resolve()))
     rows = c.execute(
-        "SELECT symbol, entry_time, exit_time, actual_return, exit_reason FROM crypto_trades "
+        "SELECT symbol, entry_time, exit_time, actual_return, exit_reason, position_size, "
+        "entry_price, exit_price FROM crypto_trades "
         "WHERE exit_time IS NOT NULL AND paper=0 ORDER BY exit_time DESC LIMIT ?",
         (lookback,),
     ).fetchall()
@@ -45,9 +46,17 @@ def analyze_crypto_health(*, crypto_db: str = "outputs/crypto_trades.db", lookba
 
     rets, holds, churn, by_reason = [], [], 0, {}
     loser_counts: dict[str, int] = {}
-    for sym, et, xt, ret, reason in rows:
+    realized_krw = 0.0   # 실제 원화 손익
+    volume_krw = 0.0     # 거래대금(매수액 합)
+    for sym, et, xt, ret, reason, qty, ep, xp in rows:
         r = float(ret or 0) * 100.0
         rets.append(r)
+        try:
+            q, e, x = float(qty or 0), float(ep or 0), float(xp or 0)
+            realized_krw += q * (x - e)
+            volume_krw += q * e
+        except (TypeError, ValueError):
+            pass
         hm = _hold_minutes(et, xt)
         if hm is not None:
             holds.append(hm)
@@ -63,6 +72,8 @@ def analyze_crypto_health(*, crypto_db: str = "outputs/crypto_trades.db", lookba
     gross = sum(rets)
     fee_drag = n * _FEE_ROUNDTRIP_PCT
     net = gross - fee_drag
+    fee_krw = volume_krw * 0.0005 * 2          # 양레그 0.05%
+    net_krw = realized_krw - fee_krw           # 실제 순손익(원화)
     reason_stats = {k: {"n": len(v), "avg": round(statistics.mean(v), 2)} for k, v in by_reason.items()}
     repeat_losers = sorted([(s, cnt) for s, cnt in loser_counts.items() if cnt >= 3], key=lambda x: -x[1])[:5]
 
@@ -71,9 +82,14 @@ def analyze_crypto_health(*, crypto_db: str = "outputs/crypto_trades.db", lookba
         "win_rate": round(len(wins) / n * 100, 1),
         "avg_win": round(statistics.mean(wins), 2) if wins else 0.0,
         "avg_loss": round(statistics.mean(losses), 2) if losses else 0.0,
-        "gross_return_pct": round(gross, 2),
+        "avg_trade_pct": round(gross / n, 2),                 # 종목당 평균 수익률(의미있는 %)
+        "sum_return_pct": round(gross, 2),                    # %p 단순합 (자산 대비 아님!)
         "fee_drag_pct": round(fee_drag, 2),
         "net_return_pct": round(net, 2),
+        "realized_krw": round(realized_krw),                  # 실제 원화 손익
+        "fee_krw": round(fee_krw),
+        "net_krw": round(net_krw),                            # 실제 순손익(원화) ← 진짜 금액
+        "volume_krw": round(volume_krw),
         "median_hold_min": round(statistics.median(holds), 1) if holds else None,
         "churn_count": churn,
         "churn_rate": round(churn / n * 100, 1),
@@ -85,8 +101,12 @@ def analyze_crypto_health(*, crypto_db: str = "outputs/crypto_trades.db", lookba
     findings: list[str] = []
     recs: list[str] = []
     # (최우선) 순손실 + 비대칭(승자짧게/패자길게)
-    if metrics["net_return_pct"] < 0:
-        findings.append(f"⚠️ 최근 {n}건 순손실 {metrics['net_return_pct']}%p (수수료 포함) — 현 세팅 마이너스")
+    if metrics["net_krw"] < 0:
+        findings.append(
+            f"⚠️ 최근 {n}건 순손실 {metrics['net_krw']:+,}원 (거래대금 {metrics['volume_krw']:,}원 굴려 "
+            f"수수료 {metrics['fee_krw']:,}원 차감 후) — 종목당 평균 {metrics['avg_trade_pct']}%. "
+            f"※ '%p 합 {metrics['sum_return_pct']}'은 자산의 그만큼이 아니라 거래수익률 단순합임"
+        )
     aw, al = metrics["avg_win"], abs(metrics["avg_loss"])
     if aw > 0 and al > aw * 1.3 and metrics["win_rate"] >= 45:
         findings.append(f"승률 {metrics['win_rate']}%로 절반 이상 이기는데 패자(-{al}%)가 승자(+{aw}%)보다 큼 "

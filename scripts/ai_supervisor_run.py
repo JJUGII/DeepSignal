@@ -44,7 +44,8 @@ def _format(report: dict, comment: str | None) -> str:
     m = report["metrics"]
     lines = [
         "🤖 [AI 매매 감독관] 코인",
-        f"최근 {m['n']}건 · 승률 {m['win_rate']}% · 순익 {m['net_return_pct']}%p (수수료 {m['fee_drag_pct']}%p 차감)",
+        f"최근 {m['n']}건 · 승률 {m['win_rate']}% · 순손익 {m['net_krw']:+,}원 "
+        f"(거래대금 {m['volume_krw']:,}원·수수료 {m['fee_krw']:,}원, 종목당 평균 {m['avg_trade_pct']}%)",
         f"평균 익절 +{m['avg_win']}% / 손절 {m['avg_loss']}% · 중앙보유 {m['median_hold_min']}분 · churn {m['churn_rate']}%",
         "",
         "🔎 진단:",
