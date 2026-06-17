@@ -367,28 +367,38 @@ def format_operator_daily_report_text(report: Any, *, name_map: dict[str, str] |
         "NO_PLAN_ORDERS" in rec_raw or "NO_ORDERS" in rec_raw or "NO_PLAN" in rec_raw
     )
 
-    if no_orders:
-        # 주문이 없으면 승인/실행/체결은 '실패'가 아니라 '해당 없음'
-        approval = execution = fill = "해당 없음"
+    # 실제 주문이 제출되지 않았으면 승인/실행/체결 단계는 의미가 없다(실패 나열은 오해).
+    # 깔끔하게 '주문 없음 + 사유' 한 줄로만 표시한다.
+    if not order_submitted:
+        order_line = "주문 없음"
+        reason = str(summary.get("no_order_reason") or summary.get("blocked_reason") or "").strip()
+        lines = [
+            "[DeepSignal] 오늘 매매 요약",
+            f"• AI 분석: {rec}",
+            "• 실제 주문: 주문 없음",
+        ]
+        if no_orders:
+            lines.append("ℹ️ 조건에 맞는 매수·매도 종목이 없어 주문하지 않았습니다(정상).")
+        elif "현금" in reason or "buyable" in reason.lower() or "INSUFFICIENT" in reason.upper():
+            lines.append("ℹ️ 주문가능 현금 부족으로 매수하지 않았습니다.")
+        elif reason:
+            lines.append(f"ℹ️ {reason[:80]}")
+        else:
+            lines.append("ℹ️ 오늘 실제 주문이 발생하지 않았습니다.")
     else:
         approval = humanize_status_label(
             str(summary.get("telegram_approval_status", summary.get("approval_status", "")))
         )
         execution = humanize_status_label(str(summary.get("execution_status", "")))
         fill = humanize_status_label(str(summary.get("fill_status", "")))
-    order_line = "주문 제출됨" if order_submitted else "주문 없음"
-
-    lines = [
-        "[DeepSignal]",
-        "오늘 매매 요약",
-        f"• AI 분석: {rec}",
-        f"• Telegram 승인: {approval}",
-        f"• 주문 실행: {execution}",
-        f"• 체결 확인: {fill}",
-        f"• 실제 주문: {order_line}",
-    ]
-    if no_orders:
-        lines.append("ℹ️ 오늘은 조건에 맞는 매수·매도 종목이 없어 주문하지 않았습니다(정상).")
+        lines = [
+            "[DeepSignal] 오늘 매매 요약",
+            f"• AI 분석: {rec}",
+            f"• Telegram 승인: {approval}",
+            f"• 주문 실행: {execution}",
+            f"• 체결 확인: {fill}",
+            "• 실제 주문: 주문 제출됨",
+        ]
     cash = summary.get("cash")
     if cash is not None:
         try:
