@@ -855,6 +855,40 @@ def process_crypto_telegram_menu_message(
     return {"action": "menu", "telegram": result}
 
 
+def _answer_callback(cfg: CryptoTelegramConfig, callback_id: str, text: str = "") -> None:
+    """인라인버튼 로딩 스피너 종료(answerCallbackQuery)."""
+    if not cfg.bot_token or not callback_id:
+        return
+    try:
+        import requests
+        requests.post(f"https://api.telegram.org/bot{cfg.bot_token}/answerCallbackQuery",
+                      json={"callback_query_id": callback_id, "text": text[:180]}, timeout=8)
+    except Exception:
+        pass
+
+
+def _handle_auto_improve_callback(cfg: CryptoTelegramConfig, upd: dict[str, Any], data: str) -> dict[str, Any]:
+    """자율개선 고위험 승인/거부 인라인버튼 처리 → scripts/auto_improve.py approve|reject 실행."""
+    cb = upd.get("callback_query") or {}
+    chat_id = str(((cb.get("message") or {}).get("chat") or {}).get("id", ""))
+    if cfg.allowed_chat_id and chat_id != str(cfg.allowed_chat_id):
+        return {"auto_improve": "ignored", "reason": "chat_id mismatch"}
+    action = "approve" if data == "aimprove:approve" else "reject"
+    root = Path(__file__).resolve().parents[3]
+    script = root / "scripts" / "auto_improve.py"
+    import subprocess
+    import sys as _sys
+    try:
+        r = subprocess.run([_sys.executable, str(script), action], cwd=str(root),
+                           capture_output=True, text=True, timeout=120)
+        ok = r.returncode == 0 and '"ok": true' in (r.stdout or "").replace(" ", "").replace('"ok":true', '"ok": true')
+        note = ("✅ 승인 배포 처리됨" if action == "approve" else "❌ 거부 처리됨") if r.returncode == 0 else "처리 실패"
+    except Exception as e:
+        note = f"오류: {e}"
+    _answer_callback(cfg, str(cb.get("id") or ""), note)
+    return {"auto_improve": action, "note": note}
+
+
 def poll_telegram_updates_once(
     cfg: CryptoTelegramConfig,
     broker: CryptoBroker,
@@ -890,6 +924,12 @@ def poll_telegram_updates_once(
             acknowledge_update(cfg.output_dir, int(uid))
         if upd.get("callback_query"):
             log_menu_event("menu update received", update_id=uid, kind="callback")
+            cb_data = str((upd.get("callback_query") or {}).get("data") or "")
+            if cb_data.startswith("aimprove:"):
+                ai_out = _handle_auto_improve_callback(cfg, upd, cb_data)
+                summary["callbacks"].append(ai_out)
+                log_menu_event("auto_improve callback", update_id=uid, action=ai_out.get("auto_improve"))
+                continue
             if not process_approvals:
                 log_menu_event("menu command ignored", reason="approvals_disabled", update_id=uid)
                 continue

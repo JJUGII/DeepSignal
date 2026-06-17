@@ -42,17 +42,30 @@ PROTECTED_PATHS = (
 )
 
 
-def _telegram(text: str) -> bool:
+def _telegram(text: str, *, buttons: list | None = None) -> bool:
+    """텔레그램 전송. buttons 주면 인라인 키보드(눌러서 승인/거부) 포함."""
     import requests
     tok = (os.environ.get("DEEPSIGNAL_NOTIFY_TELEGRAM_BOT_TOKEN") or "").strip()
     chat = (os.environ.get("DEEPSIGNAL_NOTIFY_TELEGRAM_CHAT_ID") or "").strip()
     if not tok or not chat:
         return False
+    payload = {"chat_id": chat, "text": text[:4000]}
+    if buttons:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": buttons}, ensure_ascii=False)
     try:
         return requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
-                             json={"chat_id": chat, "text": text[:4000]}, timeout=12).status_code == 200
+                             json=payload, timeout=12).status_code == 200
     except Exception:
         return False
+
+
+# 텔레그램 인라인버튼 콜백 식별자 (코인 러너 폴러가 디스패치)
+AIMPROVE_CB_APPROVE = "aimprove:approve"
+AIMPROVE_CB_REJECT = "aimprove:reject"
+_APPROVAL_BUTTONS = [[
+    {"text": "✅ 승인하고 배포", "callback_data": AIMPROVE_CB_APPROVE},
+    {"text": "❌ 거부", "callback_data": AIMPROVE_CB_REJECT},
+]]
 
 
 def _recent_git_log() -> str:
@@ -427,7 +440,13 @@ def main() -> None:
                     f"🧪 테스트: 새 실패 0건 통과 · 브랜치 {res['branch']}\n"
                     f"💬 {res.get('claude_note','')[:200]}\n\n"
                     f"―― diff 미리보기 ――\n{diff_head}\n\n"
-                    "✅ 승인/❌ 거부: 웹 환경설정 → '자율개선' 카드에서 결정하세요")
+                    "👇 아래 버튼으로 승인/거부 (또는 웹 환경설정 카드)")
+            _telegram(body, buttons=_APPROVAL_BUTTONS); print(body)
+            out = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_BRIEF.json"
+            out.write_text(json.dumps({"at": datetime.now().isoformat(), "brief": brief,
+                                       "highrisk": {k: v for k, v in res.items() if k != "diff"},
+                                       "metrics": report.get("metrics")}, ensure_ascii=False, indent=1))
+            return
         else:
             st = res.get("status")
             label = {"test_fail": "테스트 실패(새 실패)", "no_change": "claude 변경 없음",
