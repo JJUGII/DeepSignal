@@ -129,8 +129,14 @@ def _pytest_failed_set(cwd: str) -> set[str]:
     """
     # worktree엔 .venv가 없음(gitignore) → 메인 인터프리터(절대경로) 사용. cwd=worktree라
     # sys.path[0]=''가 worktree/deepsignal을 가리켜 *변경된 코드*가 실제로 테스트됨.
+    # ★시스템 부작용 테스트 격리: launchd/installer 테스트는 실제 ~/Library/LaunchAgents를
+    #  건드릴 위험이 있어(과거 plist 손상 사고) 게이트에서 제외. 어차피 SAFE_PATHS 밖이라
+    #  자율개선이 해당 코드를 수정하지 않으므로 커버리지 손실 없음.
+    DANGEROUS = ("tests/test_launchd_venv_python.py", "tests/test_launchd_installer.py",
+                 "tests/test_crypto_launchd_installer.py")
     cmd = ([sys.executable, "-m", "pytest", "tests/", "-q", "--continue-on-collection-errors",
-            "-p", "no:cacheprovider", "--no-header", "-rfE"])
+            "-p", "no:cacheprovider", "--no-header", "-rfE", "-p", "no:randomly"]
+           + [a for f in DANGEROUS for a in ("--ignore", f)])
     try:
         r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=1200)
     except subprocess.TimeoutExpired:
