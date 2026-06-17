@@ -236,7 +236,7 @@ def notify_fastlane_result(
         if success:
             uuid_line = f"\n  주문ID: {order_uuid}" if order_uuid else ""
             msg = (
-                f"⚡ [패스트레인 자동 체결] {name}\n"
+                f"🪙⚡ [코인·패스트레인 자동체결] {name}\n"
                 f"  방향: 매수\n"
                 f"  금액: ₩{krw:,}\n"
                 f"  주문가: {limit_px:,.1f}원\n"
@@ -246,7 +246,7 @@ def notify_fastlane_result(
         else:
             reason_str = "; ".join(reasons[:2]) if reasons else "알 수 없음"
             msg = (
-                f"⚡ [패스트레인 체결 실패] {name}\n"
+                f"🪙⚡ [코인·패스트레인 체결실패] {name}\n"
                 f"  사유: {reason_str}\n"
                 f"  GSQS: {gsqs_str}  P(win): {pwin_str}"
             )

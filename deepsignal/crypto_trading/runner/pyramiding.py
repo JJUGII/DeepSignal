@@ -362,7 +362,7 @@ def notify_pyramid_result(
         if success:
             uuid_line = f"\n  주문ID: {order_uuid}" if order_uuid else ""
             msg = (
-                f"📈 [피라미딩 추가매수] {name}\n"
+                f"🪙📈 [코인·피라미딩 추가매수] {name}\n"
                 f"  보유 수익률: {pnl:+.2f}%\n"
                 f"  추가 금액: ₩{krw:,}\n"
                 f"  GSQS: {gsqs_str}{uuid_line}\n"

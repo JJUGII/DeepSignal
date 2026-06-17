@@ -35,7 +35,7 @@ from deepsignal.live_trading.time_utils import now_kst_iso, stamp_daily_ai_paylo
 
 
 def format_inactive_auto_preamble(cfg: OperatorInactiveConfig) -> str:
-    return f"[DeepSignal 비활동 자동매매]\n운영자 비활동 구간({cfg.describe_window()}) — 승인 없이 주문 실행 후 결과만 보고합니다.\n"
+    return f"🇰🇷 [국내주식 비활동 자동매매]\n운영자 비활동 구간({cfg.describe_window()}) — 승인 없이 주문 실행 후 결과만 보고합니다.\n"
 
 
 def format_kis_stock_auto_execute_preamble() -> str:

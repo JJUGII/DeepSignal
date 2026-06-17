@@ -247,7 +247,7 @@ def format_operator_approval_request_text(
     price_line = f"• 주문 가격: {limit_px:,.0f}원 이하" if limit_px > 0 else f"• 주문 방식: {order_type}"
     return "\n".join(
         [
-            "[DeepSignal AI 매매 승인]",
+            "🇰🇷 [국내주식] AI 매매 승인",
             f"{symbol} {side} 추천",
             f"• 수량: {qty}주",
             price_line,
@@ -343,7 +343,7 @@ def format_operator_execution_result_text(
 def format_operator_no_orders_text() -> str:
     return "\n".join(
         [
-            "[DeepSignal]",
+            "🇰🇷 [국내주식]",
             "오늘은 주문하지 않습니다",
             "현재 기준으로 매수·매도할 종목이 없습니다.",
         ]
@@ -373,7 +373,7 @@ def format_operator_daily_report_text(report: Any, *, name_map: dict[str, str] |
         order_line = "주문 없음"
         reason = str(summary.get("no_order_reason") or summary.get("blocked_reason") or "").strip()
         lines = [
-            "[DeepSignal] 오늘 매매 요약",
+            "🇰🇷 [국내주식] 오늘 매매 요약",
             f"• AI 분석: {rec}",
             "• 실제 주문: 주문 없음",
         ]
@@ -392,7 +392,7 @@ def format_operator_daily_report_text(report: Any, *, name_map: dict[str, str] |
         execution = humanize_status_label(str(summary.get("execution_status", "")))
         fill = humanize_status_label(str(summary.get("fill_status", "")))
         lines = [
-            "[DeepSignal] 오늘 매매 요약",
+            "🇰🇷 [국내주식] 오늘 매매 요약",
             f"• AI 분석: {rec}",
             f"• Telegram 승인: {approval}",
             f"• 주문 실행: {execution}",
@@ -414,7 +414,7 @@ def format_operator_daily_report_text(report: Any, *, name_map: dict[str, str] |
 def format_operator_plan_blocked_text(status: str) -> str:
     return "\n".join(
         [
-            "[DeepSignal]",
+            "🇰🇷 [국내주식]",
             "오늘 주문 요청을 보내지 못했습니다",
             f"사유: {humanize_execution_error(status)}",
         ]
