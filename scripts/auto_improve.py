@@ -98,8 +98,18 @@ def _find_claude_cli() -> str | None:
 
 
 def _git(args: list[str], cwd: str) -> tuple[int, str]:
+    """(rc, stdout) — stderr는 의도적으로 제외. macOS의 'non-monotonic index .git/...._pack'
+    경고가 stderr로 나와 diff 파일목록 등 파싱대상을 오염시키므로 stdout만 반환한다.
+    에러 상세가 필요하면 _git_err 사용."""
     r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=60)
-    return r.returncode, (r.stdout + r.stderr).strip()
+    return r.returncode, r.stdout.strip()
+
+
+def _git_err(args: list[str], cwd: str) -> tuple[int, str]:
+    """에러 메시지용 — stdout+stderr 합치되 non-monotonic 잡음만 제거."""
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=60)
+    out = "\n".join(l for l in (r.stdout + r.stderr).splitlines() if "non-monotonic" not in l)
+    return r.returncode, out.strip()
 
 
 def _pytest_failed_set(cwd: str) -> set[str]:
@@ -150,7 +160,7 @@ def _run_autocode(brief: dict, cli: str) -> dict:
     branch = f"auto-improve/{date}"
     wt = f"/tmp/deepsignal_autoimprove_{date}"
     # 깨끗한 베이스에서만 (uncommitted 변경 있으면 중단 — 출력파일 제외)
-    rc, base = _git(["worktree", "add", "-b", branch, wt, "HEAD"], _ROOT)
+    rc, base = _git_err(["worktree", "add", "-b", branch, wt, "HEAD"], _ROOT)
     if rc != 0:
         return {"ok": False, "status": "worktree_fail", "detail": base[:300]}
     try:
@@ -188,17 +198,28 @@ def _run_autocode(brief: dict, cli: str) -> dict:
         if new_failures:
             return {"ok": False, "status": "test_fail", "branch": branch, "files": files,
                     "detail": f"새 실패 {len(new_failures)}건: " + ", ".join(new_failures[:8])}
-        # 통과 → 커밋 + main 머지
-        _git(["add", "-A"], wt)
-        _git(["commit", "-q", "-m",
+        # 통과 → 변경 소스파일만 main에 복사+커밋 (git merge는 churn하는 output/*.jsonl·
+        # 정크파일이 깔린 dirty 워킹트리에 취약 → 변경파일만 좁게 반영해 오염과 무관하게).
+        # 단, 대상파일이 main에서 이미 dirty면 사용자 작업 덮어쓸 위험 → 중단.
+        import shutil
+        _rc, dirty = _git(["diff", "--name-only"], _ROOT)
+        dirty_set = {d.strip() for d in dirty.splitlines() if d.strip()}
+        clash = [f for f in files if f in dirty_set]
+        if clash:
+            return {"ok": False, "status": "target_dirty", "branch": branch, "files": files,
+                    "detail": f"대상파일이 main에서 미커밋 상태 — 수동 검토: {clash}"}
+        for f in files:
+            shutil.copy2(Path(wt) / f, Path(_ROOT) / f)
+        _git(["add", *files], _ROOT)
+        rcc, cout = _git_err(["commit", "-m",
               f"[자율개선] {brief.get('weakness','')[:60]}\n\n{brief.get('fix','')[:200]}\n\n"
-              "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"], wt)
-        rcm, mout = _git(["merge", "--no-ff", branch, "-m", f"Merge {branch} (자율개선 자동배포)"], _ROOT)
-        if rcm != 0:
-            return {"ok": False, "status": "merge_fail", "detail": mout[:300], "branch": branch, "files": files}
+              "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"], _ROOT)
+        if rcc != 0:
+            return {"ok": False, "status": "commit_fail", "detail": cout[:300], "branch": branch, "files": files}
         return {"ok": True, "status": "deployed", "branch": branch, "files": files, "detail": claude_out}
     finally:
         _git(["worktree", "remove", "--force", wt], _ROOT)
+        _git(["branch", "-D", branch], _ROOT)   # 머지본은 main에 남음(--no-ff), 브랜치 ref만 정리
 
 
 def main() -> None:
