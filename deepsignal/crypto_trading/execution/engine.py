@@ -939,7 +939,12 @@ class CryptoExecutionEngine:
                 win_probability=p_win,
             )
 
-        if peak > 0 and cur < peak * (1.0 - cfg.trailing_stop_pct / 100.0):
+        # 트레일링은 '수익 보호' 전용 — 청산가가 진입가(본전) 이상일 때만 발동한다.
+        # 고점이 진입가 부근이면 트레일링 폭이 본전을 깨고 승자를 패자로 바꿔
+        # 비대칭(승자 짧게·패자 길게)을 키웠다. 본전 이하 하락은 하드손절/타임스톱이 처리.
+        _entry_px = float(holding.avg_buy_price or 0)
+        if (peak > 0 and cur < peak * (1.0 - cfg.trailing_stop_pct / 100.0)
+                and _entry_px > 0 and cur >= _entry_px):
             return SellExitDecision(
                 market=market,
                 reason="trailing_stop",

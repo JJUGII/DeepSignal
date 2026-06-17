@@ -331,11 +331,12 @@ def apply_aggression(level: int | None = None) -> AggressionProfile:
         e["CRYPTO_SL_PCT_MAX"] = str(_sl_floor[_lvl])
     else:
         e.pop("CRYPTO_SL_PCT_MAX", None)
-    # 손절 완화(진단 근거): -2% 손절이 ATR(~3.8%) 이내라 노이즈에 19건 잘려 -38%
-    # 최대 누수였고, 오래 들면(1일+) +38%·승률56%. → 손절을 ATR 밖(-4%)으로 넓혀
-    # 노이즈 컷을 줄이고 승자에게 여유를 준다. 트레일링(이익 보존)·타임스톱 완화는 유지.
+    # 손절 하한(가장 깊은 손절). 과거엔 노이즈 컷 방지로 -4%까지 넓혔으나, 최근 실측
+    # (패자 -3.33% > 승자 +1.89%, RR<1)은 넓은 SL이 손실 꼬리를 키워 비대칭을 악화시킴을
+    # 보여줌 → 손실 꼬리를 줄이도록 -3.0/-2.5로 좁힌다. 같은 코인 당일 2회 손절 차단
+    # (CRYPTO_MAX_STOP_LOSS_PER_MARKET_PER_DAY)이 타이트 손절의 churn을 보완한다.
     if _lvl >= 9:
-        e["CRYPTO_SL_PCT_MIN"] = "-4.0" if _lvl >= 10 else "-3.5"
+        e["CRYPTO_SL_PCT_MIN"] = "-3.0" if _lvl >= 10 else "-2.5"
         e["CRYPTO_TRAILING_STOP_PCT"] = "2.5" if _lvl >= 10 else "2.0"
         e["CRYPTO_TIME_STOP_MINUTES"] = "15"
         # 손절 완화 보완: 같은 코인 당일 2회 손절 시 재매수 차단(진짜 하락 코인 반복출혈 방지)
