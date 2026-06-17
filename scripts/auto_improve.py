@@ -242,6 +242,114 @@ def _run_autocode(brief: dict, cli: str) -> dict:
         _git(["branch", "-D", branch], _ROOT)   # 머지본은 main에 남음(--no-ff), 브랜치 ref만 정리
 
 
+_PENDING_FILE = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_PENDING.json"
+
+
+def _allowed_highrisk(files: list[str]) -> bool:
+    """고위험 변경은 거래 로직(risk/execution 등)을 만질 수 있으나, 루프 자기 가드레일
+    (PROTECTED_PATHS)은 절대 못 건드린다(self-modification 차단)."""
+    return all(f.strip() not in PROTECTED_PATHS for f in files if f.strip())
+
+
+def _prepare_highrisk(brief: dict, cli: str) -> dict:
+    """고위험 수정안을 worktree에서 claude로 구현→테스트 통과 시 *브랜치에 보류*(배포X).
+    사람 승인(_deploy_pending)을 기다린다. AUTO_IMPROVE_PENDING.json에 브랜치·diff 저장."""
+    date = datetime.now().strftime("%Y%m%d-%H%M%S")
+    branch = f"auto-improve/highrisk-{date}"
+    wt = f"/tmp/deepsignal_autoimprove_hr_{date}"
+    rc, base = _git_err(["worktree", "add", "-b", branch, wt, "HEAD"], _ROOT)
+    if rc != 0:
+        return {"ok": False, "status": "worktree_fail", "detail": base[:300]}
+    keep_branch = False
+    try:
+        baseline_failed = _pytest_failed_set(wt)
+        if "__timeout__" in baseline_failed:
+            return {"ok": False, "status": "baseline_timeout", "branch": branch}
+        prompt = (
+            "DeepSignal 코인 자동매매의 청산 비대칭(승자 짧게·패자 길게)을 교정하라. 최근 데이터: "
+            "트레일링 청산이 평균 손실(본전 이하로 winners를 끊음), 손절이 평균 -3.5%까지 끌려감, RR<1. "
+            "실제 코인 청산/손절/트레일링 로직 파일을 찾아(deepsignal/crypto_trading 또는 live_trading), "
+            "*최소 변경*으로 ①손절이 과도하게 끌려가지 않게 ②트레일링이 수익을 본전 이하로 죽이지 않게 "
+            "교정하라. 절대 금지: scripts/auto_improve.py·auto_improve plist·trade_supervisor.py(루프 가드레일). "
+            "기존 코드 스타일·테스트를 따르고, 변경 요약을 한 줄로 남겨라.\n\n"
+            f"약점: {brief.get('weakness')}\n수정방향: {brief.get('fix')}\n기대: {brief.get('expected')}"
+        )
+        cp = subprocess.run(
+            [cli, "-p", prompt, "--permission-mode", "acceptEdits",
+             "--allowedTools", "Edit", "Read", "Grep", "Glob"],
+            cwd=wt, capture_output=True, text=True, timeout=900,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": wt})
+        claude_out = (cp.stdout or "")[-1500:]
+        rc, changed = _git(["diff", "--name-only", "HEAD"], wt)
+        files = [f for f in changed.splitlines() if f.strip()]
+        if not files:
+            return {"ok": False, "status": "no_change", "detail": claude_out, "branch": branch}
+        if not _allowed_highrisk(files):
+            return {"ok": False, "status": "blocked_protected",
+                    "detail": f"보호경로(가드레일) 수정 시도: {files}", "branch": branch, "files": files}
+        post_failed = _pytest_failed_set(wt)
+        if "__timeout__" in post_failed:
+            return {"ok": False, "status": "test_timeout", "branch": branch, "files": files}
+        new_failures = sorted(post_failed - baseline_failed)
+        if new_failures:
+            return {"ok": False, "status": "test_fail", "branch": branch, "files": files,
+                    "detail": f"새 실패 {len(new_failures)}건: " + ", ".join(new_failures[:8])}
+        _rc, diff = _git(["diff", "HEAD"], wt)
+        _git(["add", "-A"], wt)
+        _git(["commit", "-m", f"[자율개선-고위험-승인대기] {brief.get('weakness','')[:60]}"], wt)
+        keep_branch = True
+        pending = {
+            "branch": branch, "files": files, "diff": diff[:8000],
+            "brief": brief, "claude_note": claude_out[-500:],
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        _PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _PENDING_FILE.write_text(json.dumps(pending, ensure_ascii=False, indent=1))
+        return {"ok": True, "status": "pending_approval", "branch": branch, "files": files,
+                "diff": diff, "claude_note": claude_out[-500:]}
+    finally:
+        _git(["worktree", "remove", "--force", wt], _ROOT)
+        if not keep_branch:
+            _git(["branch", "-D", branch], _ROOT)
+
+
+def _deploy_pending() -> dict:
+    """승인됨 → 보류 브랜치의 변경 파일을 main에 반영+커밋. (웹 승인 버튼/CLI approve)"""
+    if not _PENDING_FILE.is_file():
+        return {"ok": False, "status": "no_pending"}
+    pend = json.loads(_PENDING_FILE.read_text())
+    branch, files = pend["branch"], pend["files"]
+    rc, _o = _git(["rev-parse", "--verify", branch], _ROOT)
+    if rc != 0:
+        return {"ok": False, "status": "branch_gone", "branch": branch}
+    _rc, dirty = _git(["diff", "--name-only"], _ROOT)
+    clash = [f for f in files if f in {d.strip() for d in dirty.splitlines() if d.strip()}]
+    if clash:
+        return {"ok": False, "status": "target_dirty", "detail": str(clash)}
+    rc, out = _git_err(["checkout", branch, "--", *files], _ROOT)
+    if rc != 0:
+        return {"ok": False, "status": "checkout_fail", "detail": out[:300]}
+    _git(["add", *files], _ROOT)
+    rcc, cout = _git_err(["commit", "-m",
+          f"[자율개선-고위험-승인배포] {pend['brief'].get('weakness','')[:60]}\n\n"
+          "사용자 승인 후 배포\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"], _ROOT)
+    if rcc != 0:
+        return {"ok": False, "status": "commit_fail", "detail": cout[:300]}
+    _git(["branch", "-D", branch], _ROOT)
+    _PENDING_FILE.unlink()
+    return {"ok": True, "status": "deployed", "branch": branch, "files": files}
+
+
+def _reject_pending() -> dict:
+    """거부됨 → 보류 브랜치 폐기 + pending 제거."""
+    if not _PENDING_FILE.is_file():
+        return {"ok": False, "status": "no_pending"}
+    pend = json.loads(_PENDING_FILE.read_text())
+    _git(["branch", "-D", pend["branch"]], _ROOT)
+    _PENDING_FILE.unlink()
+    return {"ok": True, "status": "rejected", "branch": pend["branch"]}
+
+
 _STATE_FILE = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_STATE.json"
 
 
@@ -303,8 +411,35 @@ def main() -> None:
                                    "autocode": res, "metrics": report.get("metrics")},
                                   ensure_ascii=False, indent=1))
         return
+    # 고위험 + 자동모드: claude로 수정안을 준비(브랜치 보류)하고 *텔레그램 승인요청*. 배포는
+    # 사람 승인(웹 환경설정 승인 버튼) 후에만.
     elif autocode and cli:
-        body += "\n\n⚠️ 고위험 — 자동수정 안 함(allowlist 정책). 검토 후 적용"
+        if _PENDING_FILE.is_file():
+            body += "\n\n⏸️ 이미 승인 대기중인 고위험 수정이 있습니다 — 웹 환경설정에서 승인/거부 후 재시도"
+            _telegram(body); print(body); return
+        res = _prepare_highrisk(brief, cli)
+        if res.get("ok"):
+            files = ", ".join(res.get("files", []))
+            diff_head = "\n".join((res.get("diff") or "").splitlines()[:25])
+            body = ("🔴 [자율개선] 고위험 수정 — 승인요청\n"
+                    f"🎯 약점: {brief.get('weakness')}\n"
+                    f"📝 변경파일: {files}\n"
+                    f"🧪 테스트: 새 실패 0건 통과 · 브랜치 {res['branch']}\n"
+                    f"💬 {res.get('claude_note','')[:200]}\n\n"
+                    f"―― diff 미리보기 ――\n{diff_head}\n\n"
+                    "✅ 승인/❌ 거부: 웹 환경설정 → '자율개선' 카드에서 결정하세요")
+        else:
+            st = res.get("status")
+            label = {"test_fail": "테스트 실패(새 실패)", "no_change": "claude 변경 없음",
+                     "blocked_protected": "가드레일 보호경로 차단", "worktree_fail": "worktree 실패",
+                     "baseline_timeout": "베이스라인 타임아웃", "test_timeout": "테스트 타임아웃"}.get(st, st)
+            body += f"\n\n🔴 고위험 수정안 준비 실패({label}) — 검토 필요\n{str(res.get('detail',''))[:300]}"
+        _telegram(body); print(body)
+        out = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_BRIEF.json"
+        out.write_text(json.dumps({"at": datetime.now().isoformat(), "brief": brief,
+                                   "highrisk": {k: v for k, v in res.items() if k != "diff"},
+                                   "metrics": report.get("metrics")}, ensure_ascii=False, indent=1))
+        return
     elif risk == "low":
         body += "\n\n👉 저위험 — '고쳐줘' 하시면 즉시 적용합니다 (CLI 미설치라 반자동)"
     else:
@@ -318,5 +453,20 @@ def main() -> None:
     print(body)
 
 
+def _notify_decision(action: str, res: dict) -> None:
+    if res.get("ok") and action == "approve":
+        _telegram(f"✅ [자율개선] 고위험 수정 *승인 배포됨* — {', '.join(res.get('files', []))}\n"
+                  "→ 다음 거래 사이클부터 반영. 성과 나빠지면 롤백 알려주세요")
+    elif res.get("ok") and action == "reject":
+        _telegram("❌ [자율개선] 고위험 수정 *거부됨* — 보류 브랜치 폐기")
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    arg = sys.argv[1] if len(sys.argv) > 1 else ""
+    if arg == "approve":
+        r = _deploy_pending(); _notify_decision("approve", r); print(json.dumps(r, ensure_ascii=False))
+    elif arg == "reject":
+        r = _reject_pending(); _notify_decision("reject", r); print(json.dumps(r, ensure_ascii=False))
+    else:
+        main()

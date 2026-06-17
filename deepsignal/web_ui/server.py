@@ -1203,6 +1203,54 @@ async def api_auto_improve_set(req: AutoImproveStateRequest) -> JSONResponse:
     return JSONResponse({"ok": True, "state": st})
 
 
+# 고위험 자율개선 수정안 — 승인 대기/승인/거부
+def _auto_improve_pending_path() -> Path:
+    return _OUTPUT_DIR / "AUTO_IMPROVE_PENDING.json"
+
+
+@app.get("/api/auto_improve/pending")
+async def api_auto_improve_pending() -> JSONResponse:
+    def _read() -> dict:
+        p = _auto_improve_pending_path()
+        if p.is_file():
+            try:
+                return json.loads(p.read_text())
+            except Exception:
+                return {}
+        return {}
+    pend = await asyncio.to_thread(_read)
+    return JSONResponse({"pending": bool(pend), "detail": pend})
+
+
+class AutoImproveDecisionRequest(BaseModel):
+    action: str   # "approve" | "reject"
+
+
+@app.post("/api/auto_improve/decide")
+async def api_auto_improve_decide(req: AutoImproveDecisionRequest) -> JSONResponse:
+    action = (req.action or "").strip().lower()
+    if action not in ("approve", "reject"):
+        return JSONResponse({"ok": False, "error": "action은 approve|reject"}, status_code=400)
+    script = str(_PROJECT_ROOT / "scripts" / "auto_improve.py")
+    py = str(_PROJECT_ROOT / ".venv" / "bin" / "python")
+
+    def _run() -> dict:
+        import subprocess as _sp
+        try:
+            r = _sp.run([py, script, action], cwd=str(_PROJECT_ROOT),
+                        capture_output=True, text=True, timeout=120)
+            out = (r.stdout or "").strip().splitlines()
+            last = out[-1] if out else ""
+            try:
+                return json.loads(last)
+            except Exception:
+                return {"ok": r.returncode == 0, "raw": (r.stdout + r.stderr)[-300:]}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    res = await asyncio.to_thread(_run)
+    return JSONResponse({"ok": bool(res.get("ok")), "result": res})
+
+
 # ── 승인 관리 ─────────────────────────────
 
 @app.get("/api/approval")

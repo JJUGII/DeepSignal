@@ -2421,6 +2421,33 @@ async function loadAutoImproveKillSwitch() {
            최근 브리핑${s.last_brief_at ? ' · ' + fmt_time(s.last_brief_at) : ''}<br>
            🎯 ${s.last_brief.weakness || ''} <span class="badge ${s.last_brief.risk==='low'?'badge-success':'badge-warning'}">${s.last_brief.risk||''}</span>
          </div>` : '';
+    // 고위험 승인 대기 카드
+    let pendHtml = '';
+    try {
+      const pj = await GET('/api/auto_improve/pending');
+      if (pj.pending && pj.detail) {
+        const d = pj.detail;
+        const esc = (t)=>String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const diffLines = String(d.diff||'').split('\n').slice(0,40).map(l=>{
+          const c = l.startsWith('+')&&!l.startsWith('+++') ? 'var(--ok)'
+                  : l.startsWith('-')&&!l.startsWith('---') ? 'var(--danger)' : 'var(--text-muted)';
+          return `<span style="color:${c}">${esc(l)}</span>`;
+        }).join('\n');
+        pendHtml = `
+        <div style="margin-top:14px;padding:12px;border:1px solid var(--danger);border-radius:8px;background:rgba(220,50,50,0.06)">
+          <div style="font-weight:600;color:var(--danger);font-size:13px">🔴 고위험 수정 — 승인 대기</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+            🎯 ${esc(d.brief?.weakness)}<br>
+            📝 변경: ${esc((d.files||[]).join(', '))} · 🧪 테스트 통과 · ⏱ ${fmt_time(d.created_at)}
+          </div>
+          <pre style="margin:8px 0;max-height:240px;overflow:auto;font-size:10.5px;line-height:1.45;background:var(--bg);padding:8px;border-radius:6px;white-space:pre">${diffLines}</pre>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-primary" onclick="decideAutoImprove('approve')">✅ 승인하고 배포</button>
+            <button class="btn btn-danger" onclick="decideAutoImprove('reject')">❌ 거부</button>
+          </div>
+        </div>`;
+      }
+    } catch(_e) {}
     box.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
@@ -2443,10 +2470,23 @@ async function loadAutoImproveKillSwitch() {
           ${loopOn?'🛑 완전 중단(킬스위치)':'▶️ 루프 재가동'}
         </button>
       </div>
-      ${briefHtml}`;
+      ${briefHtml}
+      ${pendHtml}`;
   } catch (e) {
     box.innerHTML = `<div class="text-muted" style="font-size:12px">자율개선 상태 조회 실패: ${e.message}</div>`;
   }
+}
+
+async function decideAutoImprove(action) {
+  const ok = action === 'approve'
+    ? confirm('이 고위험 수정을 승인하고 main에 배포할까요?\n(다음 거래 사이클부터 실제 적용됩니다)')
+    : confirm('이 수정안을 거부하고 폐기할까요?');
+  if (!ok) return;
+  try {
+    const res = await POST('/api/auto_improve/decide', { action });
+    toast(res.ok ? (action === 'approve' ? '✅ 승인 배포됨' : '❌ 거부됨') : '실패: ' + JSON.stringify(res.result));
+  } catch (e) { toast('실패: ' + e.message); }
+  loadAutoImproveKillSwitch();
 }
 
 async function toggleAutoImproveCode(on) {
