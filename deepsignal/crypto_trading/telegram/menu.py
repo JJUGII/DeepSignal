@@ -919,6 +919,8 @@ def _handle_auto_improve_callback(cfg: CryptoTelegramConfig, upd: dict[str, Any]
         final = "✅ 적용 완료 — main 배포됨 · 코인 러너 재시작으로 새 청산로직 가동 중(다음 거래부터)"
     elif ok and action == "reject":
         final = "❌ 거부됨 — 보류 브랜치 폐기"
+    elif status == "no_pending":
+        final = "ℹ️ 이미 처리된 수정입니다(중복 탭) — 추가 작업 없음"
     else:
         final = f"⚠️ 처리 실패({status}) — 확인 필요"
     _edit_message(cfg, chat_id, message_id, f"{orig_text}\n\n{final}")

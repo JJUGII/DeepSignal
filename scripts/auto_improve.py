@@ -493,6 +493,9 @@ def _notify_decision(action: str, res: dict) -> None:
                   f"🔄 {applied}\n→ 다음 거래부터 반영. 성과 나빠지면 롤백 알려주세요")
     elif res.get("ok") and action == "reject":
         _telegram("❌ [자율개선] 고위험 수정 거부됨 — 보류 브랜치 폐기")
+    elif res.get("status") == "no_pending":
+        # 이미 처리됨(버튼+CLI 중복 등) — 실패 아님, 알림 생략
+        pass
     elif not res.get("ok"):
         _telegram(f"⚠️ [자율개선] {action} 처리 실패({res.get('status')}) — 확인 필요")
 
