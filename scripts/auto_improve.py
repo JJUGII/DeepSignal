@@ -26,7 +26,7 @@ for _l in (open(os.path.join(_ROOT, ".env")) if Path(os.path.join(_ROOT, ".env")
         _k, _v = _l.strip().split("=", 1)
         os.environ.setdefault(_k, _v)
 
-from deepsignal.ai.trade_supervisor import analyze_crypto_health
+from deepsignal.ai.trade_supervisor import analyze_asset_health, analyze_crypto_health
 
 # 저위험으로 자동수정 허용하는 코드 경로 (분석·리포트·도구만 — 실행/리스크/브로커 제외)
 SAFE_PATHS = ("deepsignal/ai/", "scripts/", "deepsignal/analyzer/", "deepsignal/collector/")
@@ -77,7 +77,7 @@ def _recent_git_log() -> str:
         return ""
 
 
-def _llm_weakness_brief(report: dict) -> dict | None:
+def _llm_weakness_brief(report: dict, *, asset_label: str = "코인") -> dict | None:
     """LLM: 최근 성과 데이터로 #1 약점 + 구체적 코드수정안 + 위험도(low/high)."""
     if os.environ.get("NEWS_LLM_ENABLED", "false").strip().lower() not in ("1", "true", "yes", "on"):
         return None
@@ -87,7 +87,7 @@ def _llm_weakness_brief(report: dict) -> dict | None:
     import requests
     m = report.get("metrics", {})
     prompt = (
-        "너는 코인 자동매매 시스템의 자율 개선 엔지니어다. 아래 최근 성과 지표·진단을 보고, "
+        f"너는 {asset_label} 자동매매 시스템의 자율 개선 엔지니어다. 아래 최근 성과 지표·진단을 보고, "
         "다음 거래 사이클을 위해 *지금 고칠 가장 중요한 약점 1개*와 *구체적 코드/파라미터 수정 방향*, "
         "그리고 위험도를 평가하라. 위험도 low=분석/리포트/바운드된 임계만, high=전략/사이징/리스크게이트/주문로직. "
         '반드시 JSON: {"weakness":"...", "fix":"구체적 수정 방향(파일/함수 수준)", "risk":"low|high", "expected":"기대효과"}. '
@@ -264,7 +264,7 @@ def _allowed_highrisk(files: list[str]) -> bool:
     return all(f.strip() not in PROTECTED_PATHS for f in files if f.strip())
 
 
-def _prepare_highrisk(brief: dict, cli: str) -> dict:
+def _prepare_highrisk(brief: dict, cli: str, *, asset_label: str = "코인") -> dict:
     """고위험 수정안을 worktree에서 claude로 구현→테스트 통과 시 *브랜치에 보류*(배포X).
     사람 승인(_deploy_pending)을 기다린다. AUTO_IMPROVE_PENDING.json에 브랜치·diff 저장."""
     date = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -279,12 +279,11 @@ def _prepare_highrisk(brief: dict, cli: str) -> dict:
         if "__timeout__" in baseline_failed:
             return {"ok": False, "status": "baseline_timeout", "branch": branch}
         prompt = (
-            "DeepSignal 코인 자동매매의 청산 비대칭(승자 짧게·패자 길게)을 교정하라. 최근 데이터: "
-            "트레일링 청산이 평균 손실(본전 이하로 winners를 끊음), 손절이 평균 -3.5%까지 끌려감, RR<1. "
-            "실제 코인 청산/손절/트레일링 로직 파일을 찾아(deepsignal/crypto_trading 또는 live_trading), "
-            "*최소 변경*으로 ①손절이 과도하게 끌려가지 않게 ②트레일링이 수익을 본전 이하로 죽이지 않게 "
-            "교정하라. 절대 금지: scripts/auto_improve.py·auto_improve plist·trade_supervisor.py(루프 가드레일). "
-            "기존 코드 스타일·테스트를 따르고, 변경 요약을 한 줄로 남겨라.\n\n"
+            f"DeepSignal {asset_label} 자동매매의 아래 약점을 *최소 변경*으로 교정하라. "
+            "관련 실제 로직 파일을 직접 찾아서(코인=deepsignal/crypto_trading, 주식=deepsignal/"
+            "scoring·live_trading) 정확히 고쳐라. 절대 금지: scripts/auto_improve.py·auto_improve "
+            "plist·trade_supervisor.py(루프 가드레일). 기존 코드 스타일·테스트를 따르고, 변경 요약을 "
+            "한 줄로 남겨라.\n\n"
             f"약점: {brief.get('weakness')}\n수정방향: {brief.get('fix')}\n기대: {brief.get('expected')}"
         )
         cp = subprocess.run(
@@ -313,7 +312,7 @@ def _prepare_highrisk(brief: dict, cli: str) -> dict:
         keep_branch = True
         pending = {
             "branch": branch, "files": files, "diff": diff[:8000],
-            "brief": brief, "claude_note": claude_out[-500:],
+            "brief": brief, "asset": asset_label, "claude_note": claude_out[-500:],
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
         _PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -376,100 +375,94 @@ def _read_state() -> dict:
     return {}
 
 
+_AUTO_IMPROVE_ASSETS = [("crypto", "코인"), ("overseas", "해외"), ("domestic", "국내")]
+_MIN_SAMPLE_FOR_CODECHANGE = 10   # 표본 부족 자산은 코드변경 안 함(브리핑만)
+
+
+def _process_asset(asset: str, label: str, *, cli: str | None, autocode: bool,
+                   allow_codechange: bool) -> dict:
+    """단일 자산: 분석→LLM 브리핑→(허용·자동·충분표본 시) 코드변경. 결과 dict."""
+    report = analyze_asset_health(asset, lookback=60)
+    if report.get("error"):
+        print(f"[{label}] {report['error']}")
+        return {"asset": asset, "skipped": report["error"], "acted": False}
+    brief = _llm_weakness_brief(report, asset_label=label)
+    m = report.get("metrics", {})
+    if not brief:
+        msg = f"🔁 [자율개선·{label}] 분석만(LLM off/데이터부족). 순손익 {m.get('net_krw','?')}원"
+        print(msg)
+        return {"asset": asset, "brief": None, "acted": False}
+    risk = str(brief.get("risk", "high")).lower()
+    n = int(m.get("n", 0) or 0)
+    base = (f"🔁 [자율개선·{label}] 약점 브리핑\n"
+            f"🎯 약점: {brief.get('weakness')}\n"
+            f"🔧 수정안: {brief.get('fix')}\n"
+            f"📈 기대: {brief.get('expected')}\n"
+            f"⚖️ 위험도: {risk} · 표본 {n}건")
+
+    # 표본 부족하거나 코드변경 비허용/비자동 → 브리핑만
+    if not (allow_codechange and autocode and cli) or n < _MIN_SAMPLE_FOR_CODECHANGE:
+        extra = ("\n⏸️ 표본 부족 — 브리핑만(코드변경 보류)" if n < _MIN_SAMPLE_FOR_CODECHANGE
+                 else "\n👉 검토 후 적용 ('고쳐줘'/'검토하자')")
+        _telegram(base + extra); print(base + extra)
+        return {"asset": asset, "brief": brief, "acted": False}
+
+    # 저위험 → 자동수정(SAFE_PATHS 밖이면 자동 차단), 고위험 → 승인요청
+    if risk == "low":
+        res = _run_autocode(brief, cli)
+        if res.get("ok"):
+            base += (f"\n\n🤖 자동수정 배포됨 ✅ ({', '.join(res.get('files', []))})\n→ 다음 사이클 반영")
+        else:
+            lbl = {"test_fail": "테스트 실패", "blocked_unsafe_path": "안전경로 밖(주식 로직 등)→수동",
+                   "no_change": "변경 없음"}.get(res.get("status"), res.get("status"))
+            base += f"\n\n🤖 자동수정 보류({lbl})\n{str(res.get('detail',''))[:200]}"
+        _telegram(base); print(base)
+        return {"asset": asset, "brief": brief, "autocode": res, "acted": bool(res.get("ok"))}
+
+    # 고위험
+    res = _prepare_highrisk(brief, cli, asset_label=label)
+    if res.get("ok"):
+        diff_head = "\n".join((res.get("diff") or "").splitlines()[:22])
+        body = (f"🔴 [자율개선·{label}] 고위험 수정 — 승인요청\n"
+                f"🎯 {brief.get('weakness')}\n"
+                f"📝 변경: {', '.join(res.get('files', []))}\n"
+                f"🧪 새 실패 0건 통과 · 브랜치 {res['branch']}\n\n"
+                f"―― diff ――\n{diff_head}\n\n👇 버튼으로 승인/거부")
+        _telegram(body, buttons=_APPROVAL_BUTTONS); print(body)
+        return {"asset": asset, "brief": brief, "highrisk": {k: v for k, v in res.items() if k != "diff"}, "acted": True}
+    lbl = {"test_fail": "테스트 실패", "no_change": "claude 변경 없음",
+           "blocked_protected": "가드레일 차단"}.get(res.get("status"), res.get("status"))
+    base += f"\n\n🔴 고위험 준비 실패({lbl}) — 검토 필요\n{str(res.get('detail',''))[:200]}"
+    _telegram(base); print(base)
+    return {"asset": asset, "brief": brief, "highrisk": {"status": res.get("status")}, "acted": False}
+
+
 def main() -> None:
     state = _read_state()
-    # 완전 중단 킬스위치(웹): loop=false면 분석·자동수정 모두 정지
     if state.get("loop") is False or \
        os.environ.get("AUTO_IMPROVE_ENABLED", "true").strip().lower() in ("0", "false", "no", "off"):
         print("자율개선 OFF (웹 킬스위치 또는 AUTO_IMPROVE_ENABLED=off) — 중단")
         return
-    report = analyze_crypto_health(lookback=60)
-    brief = _llm_weakness_brief(report)
-    ts = datetime.now().strftime("%m-%d %H:%M")
     cli = _find_claude_cli()
     autocode = os.environ.get("AUTO_IMPROVE_AUTOCODE", "false").strip().lower() in ("1", "true", "yes", "on")
-    # 웹 킬스위치가 env보다 우선: autocode=false면 코드 자동수정 끄고 브리핑만(거래는 무관)
     if state.get("autocode") is False:
         autocode = False
-
-    if not brief:
-        m = report.get("metrics", {})
-        msg = f"🔁 [자율개선 {ts}] 분석만(LLM off 또는 데이터부족). 순손익 {m.get('net_krw','?')}원"
-        _telegram(msg); print(msg); return
-
-    risk = str(brief.get("risk", "high")).lower()
-    head = "🔁 [자율개선 루프] 약점 브리핑"
-    body = (f"{head}\n"
-            f"🎯 약점: {brief.get('weakness')}\n"
-            f"🔧 수정안: {brief.get('fix')}\n"
-            f"📈 기대: {brief.get('expected')}\n"
-            f"⚖️ 위험도: {risk}")
-
-    # 자동 모드(완전): CLI 있고 활성화 + 저위험 → worktree에서 구현·테스트·자동머지
-    if autocode and cli and risk == "low":
-        res = _run_autocode(brief, cli)
-        if res.get("ok"):
-            body += (f"\n\n🤖 자동수정 배포됨 ✅ (브랜치 {res['branch']})\n"
-                     f"변경: {', '.join(res.get('files', []))}\n"
-                     "→ 다음 사이클부터 반영. 성과 나빠지면 알려주세요(롤백)")
-        else:
-            st = res.get("status")
-            label = {"test_fail": "테스트 실패", "blocked_unsafe_path": "안전경로 위반 차단",
-                     "no_change": "변경 없음", "merge_fail": "머지 충돌",
-                     "worktree_fail": "worktree 생성 실패"}.get(st, st)
-            body += f"\n\n🤖 자동수정 보류({label}) — 수동 검토 필요\n{str(res.get('detail',''))[:300]}"
-        _telegram(body); print(body)
-        out = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_BRIEF.json"
-        out.write_text(json.dumps({"at": datetime.now().isoformat(), "brief": brief,
-                                   "autocode": res, "metrics": report.get("metrics")},
-                                  ensure_ascii=False, indent=1))
-        return
-    # 고위험 + 자동모드: claude로 수정안을 준비(브랜치 보류)하고 *텔레그램 승인요청*. 배포는
-    # 사람 승인(웹 환경설정 승인 버튼) 후에만.
-    elif autocode and cli:
-        if _PENDING_FILE.is_file():
-            body += "\n\n⏸️ 이미 승인 대기중인 고위험 수정이 있습니다 — 웹 환경설정에서 승인/거부 후 재시도"
-            _telegram(body); print(body); return
-        res = _prepare_highrisk(brief, cli)
-        if res.get("ok"):
-            files = ", ".join(res.get("files", []))
-            diff_head = "\n".join((res.get("diff") or "").splitlines()[:25])
-            body = ("🔴 [자율개선] 고위험 수정 — 승인요청\n"
-                    f"🎯 약점: {brief.get('weakness')}\n"
-                    f"📝 변경파일: {files}\n"
-                    f"🧪 테스트: 새 실패 0건 통과 · 브랜치 {res['branch']}\n"
-                    f"💬 {res.get('claude_note','')[:200]}\n\n"
-                    f"―― diff 미리보기 ――\n{diff_head}\n\n"
-                    "👇 아래 버튼으로 승인/거부 (또는 웹 환경설정 카드)")
-            _telegram(body, buttons=_APPROVAL_BUTTONS); print(body)
-            out = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_BRIEF.json"
-            out.write_text(json.dumps({"at": datetime.now().isoformat(), "brief": brief,
-                                       "highrisk": {k: v for k, v in res.items() if k != "diff"},
-                                       "metrics": report.get("metrics")}, ensure_ascii=False, indent=1))
-            return
-        else:
-            st = res.get("status")
-            label = {"test_fail": "테스트 실패(새 실패)", "no_change": "claude 변경 없음",
-                     "blocked_protected": "가드레일 보호경로 차단", "worktree_fail": "worktree 실패",
-                     "baseline_timeout": "베이스라인 타임아웃", "test_timeout": "테스트 타임아웃"}.get(st, st)
-            body += f"\n\n🔴 고위험 수정안 준비 실패({label}) — 검토 필요\n{str(res.get('detail',''))[:300]}"
-        _telegram(body); print(body)
-        out = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_BRIEF.json"
-        out.write_text(json.dumps({"at": datetime.now().isoformat(), "brief": brief,
-                                   "highrisk": {k: v for k, v in res.items() if k != "diff"},
-                                   "metrics": report.get("metrics")}, ensure_ascii=False, indent=1))
-        return
-    elif risk == "low":
-        body += "\n\n👉 저위험 — '고쳐줘' 하시면 즉시 적용합니다 (CLI 미설치라 반자동)"
-    else:
-        body += "\n\n⚠️ 고위험 — 적용 전 검토 필요. '검토하자' 하시면 같이 봅니다"
-
-    _telegram(body)
-    # 리포트 저장
+    # 코드변경은 한 사이클 1건만 + 이미 승인대기 있으면 금지(단일 pending)
+    code_budget_used = _PENDING_FILE.is_file()
+    results = []
+    for asset, label in _AUTO_IMPROVE_ASSETS:
+        try:
+            r = _process_asset(asset, label, cli=cli, autocode=autocode,
+                               allow_codechange=not code_budget_used)
+            if r.get("acted"):
+                code_budget_used = True   # 이번 사이클 코드변경 1건 소진
+            results.append(r)
+        except Exception as e:
+            print(f"[{label}] 처리 실패: {e}")
+            results.append({"asset": asset, "error": str(e)})
     out = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_BRIEF.json"
-    out.write_text(json.dumps({"at": datetime.now().isoformat(), "brief": brief,
-                               "metrics": report.get("metrics")}, ensure_ascii=False, indent=1))
-    print(body)
+    out.write_text(json.dumps({"at": datetime.now().isoformat(), "assets": results},
+                              ensure_ascii=False, indent=1))
 
 
 def _schedule_crypto_runner_restart(delay: int = 5) -> bool:
