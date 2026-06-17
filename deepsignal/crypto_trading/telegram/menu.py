@@ -878,15 +878,24 @@ def _handle_auto_improve_callback(cfg: CryptoTelegramConfig, upd: dict[str, Any]
     script = root / "scripts" / "auto_improve.py"
     import subprocess
     import sys as _sys
+    ok, status = False, ""
     try:
         r = subprocess.run([_sys.executable, str(script), action], cwd=str(root),
                            capture_output=True, text=True, timeout=120)
-        ok = r.returncode == 0 and '"ok": true' in (r.stdout or "").replace(" ", "").replace('"ok":true', '"ok": true')
-        note = ("✅ 승인 배포 처리됨" if action == "approve" else "❌ 거부 처리됨") if r.returncode == 0 else "처리 실패"
+        lines = [l for l in (r.stdout or "").splitlines() if l.strip()]
+        try:
+            res = json.loads(lines[-1]) if lines else {}
+            ok, status = bool(res.get("ok")), str(res.get("status") or "")
+        except Exception:
+            ok = r.returncode == 0
     except Exception as e:
-        note = f"오류: {e}"
+        status = f"오류:{e}"
+    if ok:
+        note = "✅ 승인 — main 배포됨" if action == "approve" else "❌ 거부 — 폐기됨"
+    else:
+        note = f"처리 실패({status})"
     _answer_callback(cfg, str(cb.get("id") or ""), note)
-    return {"auto_improve": action, "note": note}
+    return {"auto_improve": action, "ok": ok, "status": status, "note": note}
 
 
 def poll_telegram_updates_once(
