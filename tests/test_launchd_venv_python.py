@@ -68,9 +68,9 @@ def test_plist_argv_uses_venv_python(project: Path) -> None:
 def test_validate_plist_rejects_homebrew_argv(project: Path, monkeypatch, tmp_path: Path) -> None:
     agents = tmp_path / "LaunchAgents"
     agents.mkdir()
-    monkeypatch.setattr("deepsignal.live_trading.launchd_installer.launch_agents_dir", lambda: agents)
+    monkeypatch.setattr("deepsignal.live_trading.ops.launchd_installer.launch_agents_dir", lambda: agents)
     monkeypatch.setattr(
-        "deepsignal.live_trading.launchd_installer.plist_path",
+        "deepsignal.live_trading.ops.launchd_installer.plist_path",
         lambda: agents / "com.deepsignal.auto_runner.plist",
     )
     py = require_venv_python(project)
@@ -108,9 +108,9 @@ def test_install_blocks_without_venv(project: Path, monkeypatch, tmp_path: Path)
     agents = tmp_path / "LaunchAgents"
     agents.mkdir()
     (project / ".venv" / "bin" / "python").unlink()
-    monkeypatch.setattr("deepsignal.live_trading.launchd_installer.launch_agents_dir", lambda: agents)
+    monkeypatch.setattr("deepsignal.live_trading.ops.launchd_installer.launch_agents_dir", lambda: agents)
     monkeypatch.setattr(
-        "deepsignal.live_trading.launchd_installer.plist_path",
+        "deepsignal.live_trading.ops.launchd_installer.plist_path",
         lambda: agents / "com.deepsignal.auto_runner.plist",
     )
     cfg = __import__(

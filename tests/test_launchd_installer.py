@@ -159,9 +159,9 @@ def test_plist_contains_keepalive_and_logs(project: Path) -> None:
 def test_write_plist_validation(project: Path, monkeypatch, tmp_path: Path) -> None:
     agents = tmp_path / "LaunchAgents"
     agents.mkdir()
-    monkeypatch.setattr("deepsignal.live_trading.launchd_installer.launch_agents_dir", lambda: agents)
+    monkeypatch.setattr("deepsignal.live_trading.ops.launchd_installer.launch_agents_dir", lambda: agents)
     monkeypatch.setattr(
-        "deepsignal.live_trading.launchd_installer.plist_path",
+        "deepsignal.live_trading.ops.launchd_installer.plist_path",
         lambda: agents / "com.deepsignal.auto_runner.plist",
     )
     path = write_plist(project, LaunchdRunnerConfig())
@@ -173,9 +173,9 @@ def test_write_plist_validation(project: Path, monkeypatch, tmp_path: Path) -> N
 def test_install_without_load(project: Path, monkeypatch, tmp_path: Path) -> None:
     agents = tmp_path / "LaunchAgents"
     agents.mkdir()
-    monkeypatch.setattr("deepsignal.live_trading.launchd_installer.launch_agents_dir", lambda: agents)
+    monkeypatch.setattr("deepsignal.live_trading.ops.launchd_installer.launch_agents_dir", lambda: agents)
     monkeypatch.setattr(
-        "deepsignal.live_trading.launchd_installer.plist_path",
+        "deepsignal.live_trading.ops.launchd_installer.plist_path",
         lambda: agents / "com.deepsignal.auto_runner.plist",
     )
     result = install_launchd(LaunchdRunnerConfig(), project_dir=project, load_now=False, sanitize_path=False)
