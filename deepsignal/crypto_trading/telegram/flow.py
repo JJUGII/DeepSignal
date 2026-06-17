@@ -426,9 +426,10 @@ def format_execution_report(
         "UPBIT_DRY_RUN_BLOCKED",
         "BITHUMB_DRY_RUN_BLOCKED",
         "CRYPTO_PAPER_MODE_BLOCKED",
+        "skipped_dust",   # 최소주문액 미만 먼지 — 실제 주문 안 나감 → '접수' 알림 금지
     )
     if blocked:
-        return ""   # 페이퍼 모드는 알림 생략
+        return ""   # 페이퍼/먼지 = 실주문 없음 → 알림 생략
 
     is_sell = plan.side.lower() == "sell"
     icon    = "🔴" if is_sell else "🟢"
