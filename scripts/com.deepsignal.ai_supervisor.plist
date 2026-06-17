@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deepsignal.ai_supervisor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/.venv/bin/python</string>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/scripts/ai_supervisor_run.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DEEPSIGNAL_PROJECT_ROOT</key>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>NEWS_LLM_ENABLED</key>
+    <string>true</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/jjugii/.deepsignal/project_root</string>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/ai_supervisor.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/ai_supervisor.error.log</string>
+</dict>
+</plist>
