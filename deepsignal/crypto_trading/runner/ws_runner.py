@@ -773,6 +773,21 @@ def _order_mgmt_thread_main(
         except Exception as exc:
             logger.warning("order_mgmt(buy): 오류: %s", exc)
 
+        # 먼지 합병(저빈도): 1천~5천원 못파는 잔량을 추가매수→전량매도로 현금화.
+        # CRYPTO_DUST_CONSOLIDATE=true 일 때만. 약 1시간 주기(틱 카운터).
+        try:
+            from deepsignal.crypto_trading.dust_consolidator import consolidate_enabled, consolidate_crypto_dust
+            if consolidate_enabled():
+                _dc = getattr(_order_mgmt_thread_main, "_dust_tick", 0) + 1
+                _order_mgmt_thread_main._dust_tick = _dc
+                _per = max(1, int(3600 / max(1, int(interval))))  # ~1시간마다
+                if _dc % _per == 0:
+                    _r = consolidate_crypto_dust(broker, execute=execute)
+                    if (_r.get("actions") or []):
+                        print(json.dumps({"dust_consolidate": _r}, ensure_ascii=False))
+        except Exception as exc:
+            logger.warning("order_mgmt(dust): 오류: %s", exc)
+
         shared.stop_event.wait(timeout=interval)
 
     logger.info("order_mgmt thread: 종료")

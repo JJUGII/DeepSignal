@@ -869,6 +869,23 @@ def cmd_market_open_report(args: argparse.Namespace) -> int:
     return 0 if res.get("ok") else 0  # 발송 실패해도 러너 죽지 않게 0
 
 
+def cmd_crypto_consolidate_dust(args: argparse.Namespace) -> int:
+    """[코인-먼지] 1,000~5,000원 못파는 잔량을 추가매수→전량매도로 현금화."""
+    try:
+        from dotenv import load_dotenv as _ld; _ld()
+    except ImportError:
+        pass
+    import json as _j
+    from deepsignal.crypto_trading.broker.factory import load_crypto_broker_from_env
+    from deepsignal.crypto_trading.dust_consolidator import consolidate_crypto_dust
+    broker = load_crypto_broker_from_env()
+    res = consolidate_crypto_dust(broker, execute=bool(getattr(args, "execute", False)))
+    print(_j.dumps(res, ensure_ascii=False, indent=1))
+    if not getattr(args, "execute", False):
+        print("\n※ 미리보기(dry-run)입니다. 실제 실행은 --execute 추가.")
+    return 0
+
+
 def cmd_crypto_pnl_diagnosis(args: argparse.Namespace) -> int:
     """[코인-진단] 실현손익을 매도트리거·보유시간별로 분해 — 손실 원인 추적."""
     from deepsignal.reporting.crypto_pnl_diagnosis import diagnose_crypto_pnl, format_diagnosis_text
@@ -5984,6 +6001,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_pnl = sub.add_parser("crypto-pnl-diagnosis", help="[코인-진단] 실현손익 매도트리거·보유시간별 분해")
     p_pnl.add_argument("--output-dir", type=str, default="outputs")
     p_pnl.add_argument("--days", type=int, default=30)
+    p_cdust = sub.add_parser("crypto-consolidate-dust", help="[코인-먼지] 1천~5천원 잔량 추가매수→전량매도로 현금화")
+    p_cdust.add_argument("--execute", action="store_true", help="실주문 실행 (없으면 미리보기)")
     p_krs = sub.add_parser("kr-scan", help="[국내-스캔] 전 시장 급등주 스캔(KIS 순위 API) → 신호 기록")
     p_krs.add_argument("--force", action="store_true", help="KR_SCANNER_ENABLED 무시하고 강제 실행")
     p_nws = sub.add_parser("crypto-news-refresh", help="[코인-LLM] 뉴스 감성/악재를 LLM 분석해 캐시 갱신 (스코어·게이트가 읽음)")
@@ -6207,6 +6226,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_aggression_report(args)
     elif args.command == "crypto-news-refresh":
         return cmd_crypto_news_refresh(args)
+    elif args.command == "crypto-consolidate-dust":
+        return cmd_crypto_consolidate_dust(args)
     elif args.command == "crypto-pnl-diagnosis":
         return cmd_crypto_pnl_diagnosis(args)
     elif args.command == "kr-scan":
