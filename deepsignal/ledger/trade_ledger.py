@@ -248,6 +248,60 @@ def realized_pnl(conn) -> dict[str, Any]:
     }
 
 
+def realized_trips(conn, *, asset_class: str | None = None) -> list[dict[str, Any]]:
+    """FIFO로 매칭된 완결 round-trip 목록. 각 trip: 진입/청산 시각·가격·수량·손익%·보유분.
+
+    감독관(승률·비대칭·churn) 입력용. asset_class 지정 시 해당 자산만.
+    """
+    from datetime import datetime as _dt
+
+    def _parse(ts):
+        try:
+            return _dt.fromisoformat(str(ts).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    q = ("SELECT asset_class,symbol,name,ts,side,quantity,price FROM trade_ledger "
+         + ("WHERE asset_class=? " if asset_class else "")
+         + "ORDER BY ts")
+    rows = conn.execute(q, (asset_class,) if asset_class else ()).fetchall()
+    fills: dict[tuple[str, str], list] = defaultdict(list)
+    names: dict[tuple[str, str], str] = {}
+    for asset, sym, name, ts, side, qty, price in rows:
+        fills[(asset, sym)].append((ts, side, float(qty), float(price)))
+        if name:
+            names[(asset, sym)] = name
+
+    trips: list[dict[str, Any]] = []
+    for (asset, sym), fs in fills.items():
+        buyq: deque = deque()  # [qty, price, ts]
+        for ts, side, qty, price in fs:
+            if side == "BUY":
+                buyq.append([qty, price, ts])
+            else:  # SELL — FIFO 매칭
+                rem = qty
+                while rem > 1e-12 and buyq:
+                    lot = buyq[0]
+                    take = min(rem, lot[0])
+                    ep, et = lot[1], lot[2]
+                    pnl_pct = (price - ep) / ep * 100.0 if ep > 0 else 0.0
+                    e_dt, x_dt = _parse(et), _parse(ts)
+                    hold_min = (x_dt - e_dt).total_seconds() / 60.0 if (e_dt and x_dt) else None
+                    trips.append({
+                        "asset": asset, "symbol": sym, "name": names.get((asset, sym), ""),
+                        "entry_ts": et, "exit_ts": ts, "qty": take,
+                        "entry_price": ep, "exit_price": price,
+                        "pnl_krw": take * (price - ep), "pnl_pct": round(pnl_pct, 3),
+                        "hold_minutes": round(hold_min, 1) if hold_min is not None else None,
+                    })
+                    lot[0] -= take
+                    rem -= take
+                    if lot[0] <= 1e-12:
+                        buyq.popleft()
+    trips.sort(key=lambda t: str(t["exit_ts"]))
+    return trips
+
+
 def sync_all(*, db_path: str | None = None) -> dict[str, Any]:
     conn = _conn(db_path)
     nc = ingest_crypto(conn)
