@@ -8,6 +8,7 @@
 
 안전: 저위험만 자동(코드 경로 allowlist), 테스트 게이트, 브랜치 격리, 텔레그램 통지,
 env AUTO_IMPROVE_AUTOCODE 로 자동모드 on/off (기본 off=브리핑만).
+(파이프라인 검증 완료 2026-06-17)
 """
 from __future__ import annotations
 
