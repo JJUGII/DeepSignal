@@ -19,7 +19,7 @@ for _l in (open(os.path.join(_ROOT, ".env")) if Path(os.path.join(_ROOT, ".env")
         _k, _v = _l.strip().split("=", 1)
         os.environ.setdefault(_k, _v)
 
-from deepsignal.ai.trade_supervisor import analyze_crypto_health, llm_comment
+from deepsignal.ai.trade_supervisor import analyze_crypto_health, auto_tune, llm_comment
 
 _REPORT = Path(_ROOT) / "outputs" / "AI_SUPERVISOR_REPORT.json"
 
@@ -53,6 +53,10 @@ def _format(report: dict, comment: str | None) -> str:
     lines += [f"• {f}" for f in report["findings"]]
     if report["recommendations"]:
         lines += ["", "💡 권고:"] + [f"→ {c}" for c in report["recommendations"]]
+    tune = report.get("auto_tune")
+    if tune and tune.get("applied"):
+        lines += ["", f"🔧 자동 튜닝 적용: TP {tune['take_profit_pct']}% / SL {tune['stop_loss_pct']}%",
+                  f"   ({tune['reason']})"]
     if comment:
         lines += ["", f"🧠 총평: {comment}"]
     return "\n".join(lines)
@@ -60,13 +64,15 @@ def _format(report: dict, comment: str | None) -> str:
 
 def main() -> None:
     report = analyze_crypto_health(lookback=60)
+    tune = auto_tune(report)            # 안전 자동 튜닝(env AI_SUPERVISOR_AUTOTUNE)
+    report["auto_tune"] = tune
     comment = llm_comment(report) if not report.get("error") else None
     report["llm_comment"] = comment
     _REPORT.parent.mkdir(parents=True, exist_ok=True)
     _REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=1))
     # 스팸 방지: 실제 경고(순손실·churn·비대칭·반복손실 등)가 있을 때만 텔레그램.
     findings = report.get("findings") or []
-    has_warning = bool(report.get("error")) or any(
+    has_warning = bool(report.get("error")) or bool((report.get("auto_tune") or {}).get("applied")) or any(
         f != "특이 이상 없음 — 정상 범위" for f in findings
     )
     msg = _format(report, comment)

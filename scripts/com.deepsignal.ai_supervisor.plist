@@ -17,6 +17,8 @@
     <string>1</string>
     <key>NEWS_LLM_ENABLED</key>
     <string>true</string>
+    <key>AI_SUPERVISOR_AUTOTUNE</key>
+    <string>true</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>/Users/jjugii/.deepsignal/project_root</string>

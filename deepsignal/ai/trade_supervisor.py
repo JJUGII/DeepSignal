@@ -136,6 +136,64 @@ def analyze_crypto_health(*, crypto_db: str = "outputs/crypto_trades.db", lookba
             "analyzed_at": datetime.now().isoformat(timespec="seconds")}
 
 
+def auto_tune(report: dict[str, Any], *, output_dir: str = "outputs") -> dict[str, Any] | None:
+    """데이터 기반 안전 자동 튜닝 — CRYPTO_ACTIVE_THRESHOLDS.json TP/SL 조정.
+
+    안전장치: ①가드 범위 내(base±0.5, 초과 시 러너가 리셋) ②일일 1회 쿨다운 ③env
+    AI_SUPERVISOR_AUTOTUNE=true일 때만(기본 off). 적용한 변경 dict 반환(없으면 None).
+
+    로직: 승률≥45%인데 패자>승자(승자 짧게)면 TP를 +0.25%p 올려(범위 내) 승자를 더 끈다.
+    """
+    if os.environ.get("AI_SUPERVISOR_AUTOTUNE", "false").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    if report.get("error"):
+        return None
+    m = report["metrics"]
+    p = Path(output_dir) / "CRYPTO_ACTIVE_THRESHOLDS.json"
+    if not p.is_file():
+        return None
+    try:
+        import json as _json
+        d = _json.loads(p.read_text())
+    except Exception:
+        return None
+    # 일일 쿨다운
+    today = datetime.now().strftime("%Y-%m-%d")
+    if str(d.get("autotune_date") or "") == today:
+        return None
+    # 가드 base = 단타 기본 TP/SL (env/설정). 보수적으로 2.0/-1.5 가정 + 환경값.
+    try:
+        from deepsignal.scoring.analysis_conditions import DEFAULT_ANALYSIS_CONDITIONS as _D
+        base_tp = float(getattr(_D.crypto, "take_profit_pct", 2.0))
+        base_sl = float(getattr(_D.crypto, "stop_loss_pct", -1.5))
+    except Exception:
+        base_tp, base_sl = 2.0, -1.5
+    tp = float(d.get("take_profit_pct") or base_tp)
+    sl = float(d.get("stop_loss_pct") or base_sl)
+    new_tp, new_sl = tp, sl
+    reason = None
+    aw, al = m["avg_win"], abs(m["avg_loss"])
+    rr = aw / al if al > 0 else 1.0
+    tp_cap = base_tp + 0.5     # 가드 한계
+    if m["win_rate"] >= 45 and rr < 0.9 and tp < tp_cap - 1e-6:
+        new_tp = round(min(tp_cap, tp + 0.25), 2)
+        reason = f"승자 짧게(RR {rr:.2f}) — TP {tp}→{new_tp}%로 승자 더 끌기 (가드 한계 {tp_cap})"
+    elif m["win_rate"] < 40 and tp > base_tp + 1e-6:
+        new_tp = round(max(base_tp, tp - 0.25), 2)
+        reason = f"승률 {m['win_rate']}% 낮음 — TP {tp}→{new_tp}%로 환원(승률 회복)"
+    if reason is None or (abs(new_tp - tp) < 1e-6 and abs(new_sl - sl) < 1e-6):
+        return None
+    d["take_profit_pct"] = new_tp
+    d["stop_loss_pct"] = new_sl
+    d["autotune_date"] = today
+    d["autotune_reason"] = reason
+    try:
+        p.write_text(_json.dumps(d, ensure_ascii=False, indent=1))
+    except Exception:
+        return None
+    return {"applied": True, "take_profit_pct": new_tp, "stop_loss_pct": new_sl, "reason": reason}
+
+
 def llm_comment(report: dict[str, Any]) -> str | None:
     """선택: LLM이 지표를 읽고 한 줄 총평. 무키/비활성이면 None."""
     if os.environ.get("NEWS_LLM_ENABLED", "false").strip().lower() not in ("1", "true", "yes", "on"):
