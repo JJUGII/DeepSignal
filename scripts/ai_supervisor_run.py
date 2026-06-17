@@ -38,11 +38,21 @@ def _send_telegram(text: str) -> bool:
         return False
 
 
+def _fmt_collected_at(report: dict) -> str:
+    """데이터 수집(분석 실행) 시각 — KST 'YYYY-MM-DD HH:MM:SS' 형태."""
+    raw = str(report.get("analyzed_at") or "").strip()
+    if raw:
+        return raw.replace("T", " ")
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _format(report: dict, comment: str | None) -> str:
+    collected = _fmt_collected_at(report)
     if report.get("error"):
-        return f"🤖 [AI 감독관] {report['error']}"
+        return f"📅 수집: {collected} (KST)\n🤖 [AI 감독관] {report['error']}"
     m = report["metrics"]
     lines = [
+        f"📅 데이터 수집: {collected} (KST)",
         "🤖 [AI 매매 감독관] 코인",
         f"최근 {m['n']}건 · 승률 {m['win_rate']}% · 순손익 {m['net_krw']:+,}원 "
         f"(거래대금 {m['volume_krw']:,}원·수수료 {m['fee_krw']:,}원, 종목당 평균 {m['avg_trade_pct']}%)",
