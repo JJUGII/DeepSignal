@@ -109,6 +109,15 @@ def run_listing_scan(
 
     save_market_snapshot(out, upbit=up_set, bithumb=bi_set)
 
+    # 신규상장 이벤트를 영구 기록(백테스트용 상장일 이력 — 비치명). prev=None(첫run)이면
+    # diff가 빈 리스트라 기록 안 됨.
+    if new_on_bithumb or new_on_upbit:
+        try:
+            from deepsignal.crypto_trading.listing.event_log import append_listing_events
+            append_listing_events(out, new_on_bithumb, new_on_upbit, names=all_names)
+        except Exception:
+            pass
+
     tickers = fetch_tickers_batched(
         bithumb,
         bithumb_only,

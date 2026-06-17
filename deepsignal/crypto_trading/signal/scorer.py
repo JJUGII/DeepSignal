@@ -206,6 +206,22 @@ def score_crypto_market(
             sc = compute_scalping_score(binance_sym, realtime_features)
             scalping_diag = sc.to_dict()
 
+            # 고래신호 데이터 수집(검증용) — env 또는 플래그파일(outputs/WHALE_SIGNAL_LOG.on)로
+            # on/off, 고래구간(≥5x)만, 매매동작 변경 없음·비치명. 결정시점 whale_ratio +
+            # 서브스코어를 JSONL 누적 → 며칠 뒤 forward-return IC 재판정. 끄려면 플래그 삭제.
+            import os as _os
+            from pathlib import Path as _P
+            _wlog = (_os.environ.get("WHALE_SIGNAL_LOG", "").strip().lower() in ("1", "true", "yes", "on")
+                     or _P("outputs/WHALE_SIGNAL_LOG.on").exists())
+            if _wlog:
+                try:
+                    _wr = float(realtime_features.get("whale_trade_ratio", float("nan")))
+                    if _wr == _wr and _wr >= 5.0:
+                        from scripts.whale_signal_log import log_whale_decision
+                        log_whale_decision(ticker.market, realtime_features, ref_price=None)
+                except Exception:
+                    pass
+
             if not sc.blocked:
                 # 0~100 → -100~+100 변환
                 sc_norm = (sc.score - 50.0) * 2.0
