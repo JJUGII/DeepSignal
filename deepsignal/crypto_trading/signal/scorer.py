@@ -90,9 +90,18 @@ def compute_crypto_technical_score(
     parts.append("baseline +35pt")
 
     chg_pct = float(ticker.signed_change_rate or 0) * 100.0
-    mom_pts = _clamp(chg_pct * 12.0, -30.0, 30.0)
+    # 모멘텀 sweet-band: 선형 추격 가점은 반예측이었다(signed_change_rate forward-IC −0.22,
+    # 6.7k건). 또한 독립 백테스트상 '+5~10% 초입 상승'만 양의 엣지였고 과열 추격은 −EV다.
+    # → 완만한 초입 상승만 보상하고, 과열(고변동) 구간은 보상을 거둬 추격을 억제한다.
+    if chg_pct <= 0.0:
+        mom_pts = max(-30.0, chg_pct * 10.0)          # 하락은 기존대로 선형 감점
+    elif chg_pct <= 6.0:
+        mom_pts = chg_pct * 4.0                        # 0~6%: 0→+24pt (초입 상승 보상)
+    else:
+        mom_pts = max(-10.0, 24.0 - (chg_pct - 6.0) * 3.0)  # 6%↑ 보상 체감, 14%≈0, 과열 감점
+    mom_pts = _clamp(mom_pts, -30.0, 30.0)
     score += mom_pts
-    parts.append(f"24h 변동 {chg_pct:+.2f}% → {mom_pts:+.0f}pt")
+    parts.append(f"24h 변동 {chg_pct:+.2f}% → {mom_pts:+.0f}pt (sweet-band)")
 
     rsi = quality_diag.get("rsi_14")
     if isinstance(rsi, (int, float)):
