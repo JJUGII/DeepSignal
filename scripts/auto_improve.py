@@ -472,19 +472,39 @@ def main() -> None:
     print(body)
 
 
+def _schedule_crypto_runner_restart(delay: int = 5) -> bool:
+    """배포된 거래로직을 라이브 반영 — 코인 러너를 지연 후 detached 재시작.
+    (콜백이 러너 안에서 도므로 즉시 재시작하면 자기 자신을 죽임 → sleep 후 분리 실행)"""
+    try:
+        uid = str(os.getuid())
+        cmd = f"sleep {delay}; launchctl kickstart -k gui/{uid}/com.deepsignal.crypto_auto_runner"
+        subprocess.Popen(["bash", "-c", cmd], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
+
+
 def _notify_decision(action: str, res: dict) -> None:
     if res.get("ok") and action == "approve":
-        _telegram(f"✅ [자율개선] 고위험 수정 *승인 배포됨* — {', '.join(res.get('files', []))}\n"
-                  "→ 다음 거래 사이클부터 반영. 성과 나빠지면 롤백 알려주세요")
+        applied = "러너 재시작으로 새 로직 적용 중 (5초 뒤)" if res.get("runner_restart") else \
+                  "⚠️ 러너 재시작 실패 — 수동 재시작 필요"
+        _telegram(f"✅ [자율개선] 고위험 수정 승인·배포됨 — {', '.join(res.get('files', []))}\n"
+                  f"🔄 {applied}\n→ 다음 거래부터 반영. 성과 나빠지면 롤백 알려주세요")
     elif res.get("ok") and action == "reject":
-        _telegram("❌ [자율개선] 고위험 수정 *거부됨* — 보류 브랜치 폐기")
+        _telegram("❌ [자율개선] 고위험 수정 거부됨 — 보류 브랜치 폐기")
+    elif not res.get("ok"):
+        _telegram(f"⚠️ [자율개선] {action} 처리 실패({res.get('status')}) — 확인 필요")
 
 
 if __name__ == "__main__":
     import sys
     arg = sys.argv[1] if len(sys.argv) > 1 else ""
     if arg == "approve":
-        r = _deploy_pending(); _notify_decision("approve", r); print(json.dumps(r, ensure_ascii=False))
+        r = _deploy_pending()
+        if r.get("ok"):
+            r["runner_restart"] = _schedule_crypto_runner_restart()
+        _notify_decision("approve", r); print(json.dumps(r, ensure_ascii=False))
     elif arg == "reject":
         r = _reject_pending(); _notify_decision("reject", r); print(json.dumps(r, ensure_ascii=False))
     else:

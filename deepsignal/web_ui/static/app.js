@@ -2479,13 +2479,27 @@ async function loadAutoImproveKillSwitch() {
 
 async function decideAutoImprove(action) {
   const ok = action === 'approve'
-    ? confirm('이 고위험 수정을 승인하고 main에 배포할까요?\n(다음 거래 사이클부터 실제 적용됩니다)')
+    ? confirm('이 고위험 수정을 승인하고 main에 배포할까요?\n(배포 후 코인 러너가 재시작되어 다음 거래부터 적용됩니다)')
     : confirm('이 수정안을 거부하고 폐기할까요?');
   if (!ok) return;
+  // 적용 중 표시
+  const box = document.getElementById('auto-improve-killswitch');
+  if (box) {
+    const pendBox = box.querySelector('[style*="border:1px solid var(--danger)"]');
+    if (pendBox) pendBox.insertAdjacentHTML('beforeend',
+      `<div id="ai-applying" style="margin-top:8px;font-weight:600;color:var(--warning)">⏳ ${action==='approve'?'적용 중… (배포 + 러너 재시작)':'거부 처리 중…'}</div>`);
+  }
+  const loading = (typeof toastLoading === 'function')
+    ? toastLoading(action==='approve' ? '⏳ 적용 중… 배포 후 러너 재시작' : '⏳ 거부 처리 중…') : null;
   try {
     const res = await POST('/api/auto_improve/decide', { action });
-    toast(res.ok ? (action === 'approve' ? '✅ 승인 배포됨' : '❌ 거부됨') : '실패: ' + JSON.stringify(res.result));
-  } catch (e) { toast('실패: ' + e.message); }
+    const msg = res.ok
+      ? (action === 'approve' ? '✅ 적용 완료 — 배포 + 러너 재시작(새 청산로직 가동)' : '❌ 거부 — 폐기됨')
+      : '실패: ' + JSON.stringify(res.result);
+    if (loading) loading.update(msg, res.ok ? 'success' : 'error', 7000); else toast(msg);
+  } catch (e) {
+    if (loading) loading.update('실패: ' + e.message, 'error', 7000); else toast('실패: ' + e.message);
+  }
   loadAutoImproveKillSwitch();
 }
 

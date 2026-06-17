@@ -867,6 +867,22 @@ def _answer_callback(cfg: CryptoTelegramConfig, callback_id: str, text: str = ""
         pass
 
 
+def _edit_message(cfg: CryptoTelegramConfig, chat_id: str, message_id: Any, text: str,
+                  *, keep_buttons: bool = False) -> None:
+    """원본 메시지를 편집(진행상태 표시). keep_buttons=False면 버튼 제거(중복탭 방지)."""
+    if not cfg.bot_token or not chat_id or message_id is None:
+        return
+    try:
+        import requests
+        payload: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id, "text": text[:4000]}
+        if not keep_buttons:
+            payload["reply_markup"] = json.dumps({"inline_keyboard": []})
+        requests.post(f"https://api.telegram.org/bot{cfg.bot_token}/editMessageText",
+                      json=payload, timeout=8)
+    except Exception:
+        pass
+
+
 def _handle_auto_improve_callback(cfg: CryptoTelegramConfig, upd: dict[str, Any], data: str) -> dict[str, Any]:
     """자율개선 고위험 승인/거부 인라인버튼 처리 → scripts/auto_improve.py approve|reject 실행."""
     cb = upd.get("callback_query") or {}
@@ -874,6 +890,14 @@ def _handle_auto_improve_callback(cfg: CryptoTelegramConfig, upd: dict[str, Any]
     if cfg.allowed_chat_id and chat_id != str(cfg.allowed_chat_id):
         return {"auto_improve": "ignored", "reason": "chat_id mismatch"}
     action = "approve" if data == "aimprove:approve" else "reject"
+    msg = cb.get("message") or {}
+    message_id = msg.get("message_id")
+    orig_text = str(msg.get("text") or "🔴 자율개선 고위험 수정")
+    # ① 즉시 '처리 중' 표시 + 버튼 제거(중복탭 방지)
+    _answer_callback(cfg, str(cb.get("id") or ""), "처리 중…")
+    progress = "⏳ 적용 중… (배포 + 러너 재시작)" if action == "approve" else "⏳ 거부 처리 중…"
+    _edit_message(cfg, chat_id, message_id, f"{orig_text}\n\n{progress}")
+
     root = Path(__file__).resolve().parents[3]
     script = root / "scripts" / "auto_improve.py"
     import subprocess
@@ -890,12 +914,15 @@ def _handle_auto_improve_callback(cfg: CryptoTelegramConfig, upd: dict[str, Any]
             ok = r.returncode == 0
     except Exception as e:
         status = f"오류:{e}"
-    if ok:
-        note = "✅ 승인 — main 배포됨" if action == "approve" else "❌ 거부 — 폐기됨"
+    # ② 최종 상태로 메시지 편집
+    if ok and action == "approve":
+        final = "✅ 적용 완료 — main 배포됨 · 코인 러너 재시작으로 새 청산로직 가동 중(다음 거래부터)"
+    elif ok and action == "reject":
+        final = "❌ 거부됨 — 보류 브랜치 폐기"
     else:
-        note = f"처리 실패({status})"
-    _answer_callback(cfg, str(cb.get("id") or ""), note)
-    return {"auto_improve": action, "ok": ok, "status": status, "note": note}
+        final = f"⚠️ 처리 실패({status}) — 확인 필요"
+    _edit_message(cfg, chat_id, message_id, f"{orig_text}\n\n{final}")
+    return {"auto_improve": action, "ok": ok, "status": status, "note": final}
 
 
 def poll_telegram_updates_once(
