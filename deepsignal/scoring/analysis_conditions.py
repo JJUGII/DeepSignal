@@ -157,7 +157,7 @@ class CryptoTradingThresholds:
     atr_sl_multiplier: float = 0.9
     tp_pct_min: float = 1.0
     tp_pct_max: float = 4.0
-    sl_pct_min: float = -3.0
+    sl_pct_min: float = -2.5  # 가장 깊은 손절 하한: 평균 손실(-3.51%) 초과 손실 차단 위해 -3.0→-2.5로 타이트화
     sl_pct_max: float = -0.8
     prefer_fund_manager_tp_sl: bool = False
     scalping_mode: bool = True
