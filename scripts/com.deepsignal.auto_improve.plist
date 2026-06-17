@@ -20,7 +20,9 @@
     <key>AUTO_IMPROVE_ENABLED</key>
     <string>true</string>
     <key>AUTO_IMPROVE_AUTOCODE</key>
-    <string>false</string>
+    <string>true</string>
+    <key>CLAUDE_CLI_PATH</key>
+    <string>/opt/homebrew/bin/claude</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>/Users/jjugii/.deepsignal/project_root</string>
