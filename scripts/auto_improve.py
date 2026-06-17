@@ -32,6 +32,14 @@ from deepsignal.ai.trade_supervisor import analyze_crypto_health
 SAFE_PATHS = ("deepsignal/ai/", "scripts/", "deepsignal/analyzer/", "deepsignal/collector/")
 # 절대 자동수정 금지 (고위험 — 무조건 사람 승인)
 RISKY_PATHS = ("execution/", "risk/", "broker/", "order_manager", "sizing", "live_trading/")
+# ★자기 가드레일 자기수정 금지(self-modification 차단): 루프의 안전정책을 정의하는 파일은
+#  SAFE_PATHS(scripts/) 안에 있어도 자동수정에서 *절대* 제외. 사람만 바꿀 수 있음.
+PROTECTED_PATHS = (
+    "scripts/auto_improve.py",                       # allowlist·테스트게이트·자기 자신
+    "scripts/com.deepsignal.auto_improve.plist",     # 스케줄·env 스위치
+    "deepsignal/ai/trade_supervisor.py",             # autotune 가드 범위(TP/SL bound)
+    "scripts/ai_supervisor_run.py",
+)
 
 
 def _telegram(text: str) -> bool:
@@ -138,11 +146,16 @@ def _pytest_failed_set(cwd: str) -> set[str]:
 
 
 def _all_in_safe_paths(files: list[str]) -> bool:
-    """변경 파일이 전부 SAFE_PATHS 안 + RISKY_PATHS 밖이어야 자동허용."""
+    """변경 파일이 전부 SAFE_PATHS 안 + RISKY_PATHS 밖 + PROTECTED 아님이어야 자동허용.
+
+    PROTECTED는 루프의 안전정책 정의 파일(자기 자신 등) — 자기수정 차단.
+    """
     for f in files:
         f = f.strip()
         if not f:
             continue
+        if f in PROTECTED_PATHS:        # 자기 가드레일 수정 시도 → 거부
+            return False
         if any(rp in f for rp in RISKY_PATHS):
             return False
         if not any(f.startswith(sp) for sp in SAFE_PATHS):
