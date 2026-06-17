@@ -2382,6 +2382,9 @@ function renderSettingsPage(data) {
         <h1 class="page-title">환경설정</h1>
         <div class="page-subtitle">「코인 (거래소)」 탭에서 거래소를 선택하면 해당 API 키·Dry Run 설정이 표시됩니다. 저장 후 START.bat 재시작.</div>
       </div>
+      <div id="auto-improve-killswitch" class="section-box" style="margin-bottom:14px">
+        <div class="text-muted" style="font-size:12px">자율개선 루프 상태 로딩 중…</div>
+      </div>
       <div class="section-box">
         <div class="tabs">${tabsHtml}</div>
         ${panelsHtml}
@@ -2393,11 +2396,74 @@ function renderSettingsPage(data) {
         </div>
       </div>
     `;
+    loadAutoImproveKillSwitch();
   } catch(e) {
     document.getElementById('page-settings').innerHTML =
       `<div class="page-header"><h1 class="page-title">환경설정</h1></div>
        <div class="section-box" style="color:var(--danger)">렌더링 오류: ${e.message}</div>`;
   }
+}
+
+// ── 자율개선 루프 킬스위치 (일시정지=매매중단과 다름: 코드 자동수정만 제어, 거래는 계속) ──
+async function loadAutoImproveKillSwitch() {
+  const box = document.getElementById('auto-improve-killswitch');
+  if (!box) return;
+  try {
+    const s = await GET('/api/auto_improve/state');
+    const loopOn = s.loop !== false;
+    const codeOn = loopOn && s.autocode !== false;
+    const stateLabel = !loopOn
+      ? '<span style="color:var(--danger)">● 완전중단</span>'
+      : (codeOn ? '<span style="color:var(--ok)">● 완전자동 (코드 자동수정 ON)</span>'
+                : '<span style="color:var(--warning)">● 브리핑만 (코드수정 OFF)</span>');
+    const briefHtml = s.last_brief
+      ? `<div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.5">
+           최근 브리핑${s.last_brief_at ? ' · ' + fmt_time(s.last_brief_at) : ''}<br>
+           🎯 ${s.last_brief.weakness || ''} <span class="badge ${s.last_brief.risk==='low'?'badge-success':'badge-warning'}">${s.last_brief.risk||''}</span>
+         </div>` : '';
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-weight:600;font-size:14px">🤖 자율개선 루프 ${stateLabel}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:3px">
+            클로드가 하루 2회 약점을 분석해 <b>저위험 코드만</b> 자동수정·배포합니다.
+            <b>일시정지(매매 중단)와 다릅니다</b> — 이건 코드 개선만 제어하고 거래는 그대로 계속됩니다.
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:18px;align-items:center;margin-top:12px;flex-wrap:wrap">
+        <label class="toggle" title="끄면 코드 자동수정을 멈추고 분석·브리핑만 합니다">
+          <input type="checkbox" id="ai-autocode-toggle" ${codeOn?'checked':''} ${!loopOn?'disabled':''}
+            onchange="toggleAutoImproveCode(this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+        <span style="font-size:12px">코드 자동수정 ${codeOn?'<b class="text-ok">ON</b>':'<b class="text-warning">OFF(브리핑만)</b>'}</span>
+        <div class="quick-inline-divider"></div>
+        <button class="btn ${loopOn?'btn-danger':'btn-primary'}" onclick="toggleAutoImproveLoop(${loopOn?'false':'true'})">
+          ${loopOn?'🛑 완전 중단(킬스위치)':'▶️ 루프 재가동'}
+        </button>
+      </div>
+      ${briefHtml}`;
+  } catch (e) {
+    box.innerHTML = `<div class="text-muted" style="font-size:12px">자율개선 상태 조회 실패: ${e.message}</div>`;
+  }
+}
+
+async function toggleAutoImproveCode(on) {
+  try {
+    await POST('/api/auto_improve/state', { autocode: on });
+    toast(on ? '코드 자동수정 ON' : '코드 자동수정 OFF — 브리핑만');
+  } catch (e) { toast('실패: ' + e.message); }
+  loadAutoImproveKillSwitch();
+}
+
+async function toggleAutoImproveLoop(on) {
+  if (!on && !confirm('자율개선 루프를 완전 중단할까요?\n(코드 자동수정·분석 모두 정지. 거래는 계속됩니다)')) return;
+  try {
+    await POST('/api/auto_improve/state', { loop: on, ...(on ? { autocode: true } : {}) });
+    toast(on ? '자율개선 루프 재가동' : '자율개선 루프 완전중단');
+  } catch (e) { toast('실패: ' + e.message); }
+  loadAutoImproveKillSwitch();
 }
 
 const _PRIVATE_GROUPS = ["KIS API", "Telegram", "알림 서비스"];

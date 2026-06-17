@@ -236,15 +236,34 @@ def _run_autocode(brief: dict, cli: str) -> dict:
         _git(["branch", "-D", branch], _ROOT)   # 머지본은 main에 남음(--no-ff), 브랜치 ref만 정리
 
 
+_STATE_FILE = Path(_ROOT) / "outputs" / "AUTO_IMPROVE_STATE.json"
+
+
+def _read_state() -> dict:
+    """웹 킬스위치 상태(env보다 우선). {autocode, loop} — 없으면 {} (env 따름)."""
+    try:
+        if _STATE_FILE.is_file():
+            return json.loads(_STATE_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+
 def main() -> None:
-    if os.environ.get("AUTO_IMPROVE_ENABLED", "true").strip().lower() in ("0", "false", "no", "off"):
-        print("AUTO_IMPROVE_ENABLED=off — 중단")
+    state = _read_state()
+    # 완전 중단 킬스위치(웹): loop=false면 분석·자동수정 모두 정지
+    if state.get("loop") is False or \
+       os.environ.get("AUTO_IMPROVE_ENABLED", "true").strip().lower() in ("0", "false", "no", "off"):
+        print("자율개선 OFF (웹 킬스위치 또는 AUTO_IMPROVE_ENABLED=off) — 중단")
         return
     report = analyze_crypto_health(lookback=60)
     brief = _llm_weakness_brief(report)
     ts = datetime.now().strftime("%m-%d %H:%M")
     cli = _find_claude_cli()
     autocode = os.environ.get("AUTO_IMPROVE_AUTOCODE", "false").strip().lower() in ("1", "true", "yes", "on")
+    # 웹 킬스위치가 env보다 우선: autocode=false면 코드 자동수정 끄고 브리핑만(거래는 무관)
+    if state.get("autocode") is False:
+        autocode = False
 
     if not brief:
         m = report.get("metrics", {})

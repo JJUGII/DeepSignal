@@ -1135,6 +1135,74 @@ async def api_pause(req: PauseRequest) -> JSONResponse:
     return JSONResponse({"ok": ok, "message": msg})
 
 
+# ── 자율개선 루프 킬스위치 ─────────────────────────────
+# 일시정지(매매 중단)와 *다름*: 이건 클로드가 코드를 자동수정하는 자율개선 루프만 제어.
+# 거래는 그대로 계속됨. autocode=false면 분석·브리핑만(코드 안 고침), loop=false면 완전 중단.
+
+def _auto_improve_state_path() -> Path:
+    return _OUTPUT_DIR / "AUTO_IMPROVE_STATE.json"
+
+
+def _read_auto_improve_state() -> dict:
+    p = _auto_improve_state_path()
+    try:
+        if p.is_file():
+            return json.loads(p.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+@app.get("/api/auto_improve/state")
+async def api_auto_improve_state() -> JSONResponse:
+    st = await asyncio.to_thread(_read_auto_improve_state)
+    brief = {}
+    try:
+        bp = _OUTPUT_DIR / "AUTO_IMPROVE_BRIEF.json"
+        if bp.is_file():
+            brief = json.loads(bp.read_text())
+    except Exception:
+        brief = {}
+    return JSONResponse({
+        "autocode": st.get("autocode", True),   # 기본 ON(plist autocode=true 가정)
+        "loop": st.get("loop", True),
+        "updated_at": st.get("updated_at"),
+        "last_brief": brief.get("brief"),
+        "last_brief_at": brief.get("at"),
+    })
+
+
+class AutoImproveStateRequest(BaseModel):
+    autocode: bool | None = None
+    loop: bool | None = None
+
+
+@app.post("/api/auto_improve/state")
+async def api_auto_improve_set(req: AutoImproveStateRequest) -> JSONResponse:
+    def _write() -> dict:
+        st = _read_auto_improve_state()
+        if req.autocode is not None:
+            st["autocode"] = bool(req.autocode)
+        if req.loop is not None:
+            st["loop"] = bool(req.loop)
+        st["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        p = _auto_improve_state_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(st, ensure_ascii=False, indent=1))
+        return st
+    st = await asyncio.to_thread(_write)
+    try:
+        if req.loop is False:
+            await _telegram_notify("🛑 <b>자율개선 루프 완전중단</b> — 코드 자동수정·분석 모두 정지 (거래는 계속)")
+        elif req.autocode is False:
+            await _telegram_notify("⏸ <b>자율개선 코드수정 OFF</b> — 분석·브리핑만 유지 (거래는 계속)")
+        elif req.autocode is True and req.loop is not False:
+            await _telegram_notify("▶️ <b>자율개선 완전자동 ON</b> — 저위험 코드수정 자동배포 재개")
+    except Exception:
+        pass
+    return JSONResponse({"ok": True, "state": st})
+
+
 # ── 승인 관리 ─────────────────────────────
 
 @app.get("/api/approval")
