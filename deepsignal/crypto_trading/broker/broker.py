@@ -25,6 +25,17 @@ _POLICY_MIN_ORDER_KRW = max(
     MIN_ORDER_KRW,
     float(DEFAULT_ANALYSIS_CONDITIONS.cost.min_order_value_krw),
 )
+# 매도(현금화) 전용 최소: 거래소 실제 최소(5,000원)까지 허용해 5천~1만원 먼지를
+# 묶이지 않고 현금화한다. 매수는 _POLICY_MIN(1만, 수수료 효율) 유지. env로 조정.
+def _sell_min_order_krw() -> float:
+    import os as _o
+    ov = _o.environ.get("CRYPTO_SELL_MIN_ORDER_KRW", "").strip()
+    if ov:
+        try:
+            return max(float(MIN_ORDER_KRW), float(ov))
+        except ValueError:
+            pass
+    return float(MIN_ORDER_KRW)
 UPBIT_RETRY_STATUS_CODES = frozenset({429})
 UPBIT_RETRY_DELAYS_SEC = (0.5, 1.0, 2.0)
 UPBIT_MAX_RETRIES = 3
@@ -361,8 +372,9 @@ class UpbitBroker:
         if volume <= 0:
             errors.append("매도 수량은 0보다 커야 합니다.")
         krw_value = volume * price
-        if krw_value < _POLICY_MIN_ORDER_KRW:
-            errors.append(f"주문금액은 최소 {_POLICY_MIN_ORDER_KRW:,.0f}원 이상이어야 합니다.")
+        _sell_min = _sell_min_order_krw()  # 매도는 거래소 실제 최소(5천)까지 허용 — 먼지 현금화
+        if krw_value < _sell_min:
+            errors.append(f"주문금액은 최소 {_sell_min:,.0f}원 이상이어야 합니다.")
         currency = m.split("-", 1)[-1]
         for bal in self.get_balances():
             if bal.currency.upper() == currency:

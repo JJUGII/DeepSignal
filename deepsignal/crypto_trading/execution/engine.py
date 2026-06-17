@@ -789,7 +789,8 @@ class CryptoExecutionEngine:
         if vol <= 0:
             raise ValueError("SELL volume must be > 0")
         limit_px = float(plan.limit_price)
-        from deepsignal.crypto_trading.broker.broker import _POLICY_MIN_ORDER_KRW as _MIN_SELL_KRW
+        from deepsignal.crypto_trading.broker.broker import _sell_min_order_krw as _sell_min_fn
+        _MIN_SELL_KRW = _sell_min_fn()
         # 부분매도 chunk가 최소주문액 미만이면 매도 자체가 거부돼 포지션이 안 닫히고
         # 매 틱 재시도된다(AAVE 사례). 전량은 팔 수 있으면 전량매도로 전환해 실제 청산.
         if vol * limit_px < float(_MIN_SELL_KRW):
@@ -834,7 +835,8 @@ class CryptoExecutionEngine:
         # 먼지(dust) 가드: 보유가치가 거래소 최소주문액 미만이면 매도 자체가 불가
         # (validate_limit_sell이 매 틱 거부→예외를 던져 1,000회+/일 루프 발생).
         # 매도 결정을 만들지 않고 잔량은 그대로 둔다(매도 후 안 떨어진 1e-6 등).
-        from deepsignal.crypto_trading.broker.broker import _POLICY_MIN_ORDER_KRW as _MIN_SELL_KRW
+        from deepsignal.crypto_trading.broker.broker import _sell_min_order_krw as _sell_min_fn
+        _MIN_SELL_KRW = _sell_min_fn()
         sellable_krw = float(getattr(holding, "valuation_krw", 0) or 0) or (float(getattr(holding, "balance", 0) or 0) * cur)
         if 0 < sellable_krw < float(_MIN_SELL_KRW):
             return None
