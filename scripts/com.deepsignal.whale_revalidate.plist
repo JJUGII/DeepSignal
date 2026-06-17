@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deepsignal.whale_revalidate</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/.venv/bin/python</string>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal/scripts/whale_revalidate_run.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DEEPSIGNAL_PROJECT_ROOT</key>
+    <string>/Volumes/JJU/#Project/Mac/Deepsignal</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/jjugii/.deepsignal/project_root</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Month</key><integer>6</integer>
+    <key>Day</key><integer>20</integer>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/whale_revalidate.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jjugii/.deepsignal/logs/whale_revalidate.error.log</string>
+</dict>
+</plist>
