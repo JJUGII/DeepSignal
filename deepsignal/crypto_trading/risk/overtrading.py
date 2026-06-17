@@ -201,8 +201,11 @@ def sell_blocked_by_min_hold(
     """True if SELL should be blocked (except stop_loss / take_profit)."""
     g = cfg or OvertradingGuardConfig()
     trigger = str(sell_trigger or "").lower()
+    # 익절·트레일링·시간·AI 청산은 즉시 허용. stop_loss는 제외 — 매수는 ask로 체결되는데
+    # 소형알트 스프레드(~1.5~2%)가 -1.5% 손절을 *사자마자* 트리거해 churn(buy→즉시손절→
+    # 반복, 매번 스프레드+수수료 손실)이 발생. min_hold(기본 5분) 동안은 진입 스프레드가
+    # settle되게 stop_loss를 보류한다(엔진 하드손절 경로와 동일 정책). 익절은 항상 즉시.
     if trigger in (
-        "stop_loss",
         "take_profit",
         "ai_stop",
         "trailing_stop",
