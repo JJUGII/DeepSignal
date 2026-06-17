@@ -136,6 +136,93 @@ def analyze_crypto_health(*, crypto_db: str = "outputs/crypto_trades.db", lookba
             "analyzed_at": datetime.now().isoformat(timespec="seconds")}
 
 
+def _analyze_trip_records(trips: list[dict[str, Any]], *, asset_label: str) -> dict[str, Any]:
+    """trade_ledger round-trip(주식 국내/해외)으로 코인과 동일 지표·진단 산출.
+
+    주식은 수수료·청산사유 상세가 없어 fee_krw=0, exit_reasons={}로 둔다(한계 명시).
+    """
+    if not trips:
+        return {"error": f"{asset_label} 완결 거래 없음", "n": 0}
+    rets = [float(t.get("pnl_pct") or 0.0) for t in trips]
+    holds = [t["hold_minutes"] for t in trips if t.get("hold_minutes") is not None]
+    realized_krw = sum(float(t.get("pnl_krw") or 0.0) for t in trips)
+    volume_krw = sum(float(t.get("entry_price") or 0.0) * float(t.get("qty") or 0.0) for t in trips)
+    churn = sum(1 for t in trips
+                if t.get("hold_minutes") is not None and t["hold_minutes"] < 5 and (t.get("pnl_pct") or 0) < 0)
+    loser_counts: dict[str, int] = {}
+    for t in trips:
+        if (t.get("pnl_pct") or 0) < 0:
+            key = t.get("name") or t.get("symbol") or "?"
+            loser_counts[key] = loser_counts.get(key, 0) + 1
+    wins = [r for r in rets if r > 0]
+    losses = [r for r in rets if r < 0]
+    n = len(rets)
+    gross = sum(rets)
+    repeat_losers = sorted([(s, c) for s, c in loser_counts.items() if c >= 3], key=lambda x: -x[1])[:5]
+    metrics = {
+        "n": n,
+        "win_rate": round(len(wins) / n * 100, 1),
+        "avg_win": round(statistics.mean(wins), 2) if wins else 0.0,
+        "avg_loss": round(statistics.mean(losses), 2) if losses else 0.0,
+        "avg_trade_pct": round(gross / n, 2),
+        "sum_return_pct": round(gross, 2),
+        "fee_drag_pct": 0.0,
+        "net_return_pct": round(gross, 2),
+        "realized_krw": round(realized_krw),
+        "fee_krw": 0,                       # 주식 수수료 상세 미보유
+        "net_krw": round(realized_krw),     # 수수료 차감 전(한계)
+        "volume_krw": round(volume_krw),
+        "median_hold_min": round(statistics.median(holds), 1) if holds else None,
+        "churn_count": churn,
+        "churn_rate": round(churn / n * 100, 1),
+        "exit_reasons": {},                 # 주식 청산사유 미보유
+        "repeat_losers": repeat_losers,
+    }
+    findings: list[str] = []
+    recs: list[str] = []
+    if metrics["net_krw"] < 0:
+        findings.append(f"⚠️ 최근 {n}건 실현손실 {metrics['net_krw']:+,}원 (종목당 평균 {metrics['avg_trade_pct']}%, "
+                        "※수수료 차감 전·KIS 실현기준)")
+    aw, al = metrics["avg_win"], abs(metrics["avg_loss"])
+    if aw > 0 and al > aw * 1.3 and metrics["win_rate"] >= 45:
+        findings.append(f"승률 {metrics['win_rate']}%인데 패자(-{al}%)가 승자(+{aw}%)보다 큼 — 비대칭이 순익 깎음")
+        recs.append("손절 타이트화 또는 익절 더 끌기 — RR>1")
+    if metrics["win_rate"] < 35 and n >= 10:
+        findings.append(f"승률 {metrics['win_rate']}% 낮음")
+        recs.append("진입 신호 강화 또는 일시 축소 검토")
+    if repeat_losers:
+        findings.append("반복 손실 종목: " + ", ".join(f"{s}({c})" for s, c in repeat_losers))
+        recs.append("반복손실 종목 일시 제외 검토")
+    if n < 10:
+        findings.append(f"⚠️ 표본 {n}건으로 통계적 신뢰 낮음 — 참고용")
+    if not findings:
+        findings.append("특이 이상 없음 — 정상 범위")
+    return {"metrics": metrics, "findings": findings, "recommendations": recs,
+            "analyzed_at": datetime.now().isoformat(timespec="seconds")}
+
+
+def analyze_asset_health(asset: str, *, lookback: int = 60) -> dict[str, Any]:
+    """자산별 건강분석 통합 진입점. crypto=crypto_trades.db(풍부), domestic/overseas=
+    trade_ledger 완결 round-trip(KIS 실현기준)."""
+    asset = (asset or "").strip().lower()
+    if asset in ("crypto", "coin", "코인"):
+        return analyze_crypto_health(lookback=lookback)
+    if asset in ("domestic", "kr", "국내", "overseas", "us", "해외"):
+        ac = "domestic" if asset in ("domestic", "kr", "국내") else "overseas"
+        try:
+            from deepsignal.ledger import trade_ledger as _TL
+            conn = _TL._conn(None)
+            try:
+                trips = _TL.realized_trips(conn, asset_class=ac)
+            finally:
+                conn.close()
+        except Exception as e:
+            return {"error": f"{ac} 장부 조회 실패: {e}", "n": 0}
+        trips = trips[-lookback:] if lookback else trips
+        return _analyze_trip_records(trips, asset_label=ac)
+    return {"error": f"알 수 없는 자산: {asset}", "n": 0}
+
+
 def auto_tune(report: dict[str, Any], *, output_dir: str = "outputs") -> dict[str, Any] | None:
     """데이터 기반 안전 자동 튜닝 — CRYPTO_ACTIVE_THRESHOLDS.json TP/SL 조정.
 
