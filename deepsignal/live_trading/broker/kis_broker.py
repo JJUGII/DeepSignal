@@ -925,10 +925,12 @@ class KISBroker(BrokerInterface):
                 qty = self._pick_float(row, ("ovrs_cblc_qty", "OVRS_CBLC_QTY", "cblc_qty13"))
                 if qty is None or float(qty) <= 0:
                     continue
-                key = f"{exch}:{tick}"
-                if key in seen:
+                # dedup은 종목(ticker)만으로 — KIS가 거래소 필터를 무시하고 전체 보유를
+                # 매번 반환해 같은 종목이 NASD/NYSE/AMEX 조회에 중복(평가액 부풀려짐).
+                if tick in seen:
                     continue
-                seen.add(key)
+                seen.add(tick)
+                key = f"{exch}:{tick}"
                 positions.append(
                     BrokerPosition(
                         symbol=key,
