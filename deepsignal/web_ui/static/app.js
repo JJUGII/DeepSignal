@@ -1918,7 +1918,7 @@ async function loadDashboard() {
             const pnlPct = (totUsd - pnlUsd) > 0 ? (pnlUsd / (totUsd - pnlUsd)) * 100 : 0;
             return `<div class="status-card info">
               <div class="status-card-label">해외 자산 ${exchBadge('kis')}</div>
-              <div class="status-card-value">${fmt_krw(Math.round(op.total_krw_value || 0))}</div>
+              <div class="status-card-value">${fmt_krw(Math.round(op.overseas_holdings_krw || op.total_krw_value || 0))}</div>
               <div class="status-card-row"><span class="sc-key">평가 (USD)</span><span class="sc-val">$${totUsd.toLocaleString(undefined,{maximumFractionDigits:2})}</span></div>
               <div class="status-card-row"><span class="sc-key">매수가능</span><span class="sc-val">$${(op.cash_usd||0).toLocaleString(undefined,{maximumFractionDigits:2})}</span></div>
               <div class="status-card-divider"></div>

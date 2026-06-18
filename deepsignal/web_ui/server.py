@@ -3469,6 +3469,17 @@ def _get_overseas_positions() -> dict:
             if isinstance(_o2_rows, dict):
                 _o2_rows = [_o2_rows]
             _raw_rate = float((_o2_rows or [{}])[0].get("frst_bltn_exrt") or 0)
+            if _raw_rate <= 1000:
+                # KIS가 환율 필드(frst_bltn_exrt)를 안 주는 조회(WCRC_FRCR_DVSN_CD=02 등)에서는
+                # 하드코딩 폴백 1350원으로 환산돼 원화 평가액이 ~12% 과소계상됨.
+                # → 실시간 시장환율로 폴백(없으면 마지막 캐시값).
+                try:
+                    from deepsignal.crypto_trading.kimchi_premium import get_usd_krw_rate as _gukr
+                    _mkt = float(_gukr() or 0)
+                    if _mkt > 1000:
+                        _raw_rate = _mkt
+                except Exception:
+                    pass
             usd_rate = _cached_usd_rate(_raw_rate)
             for _row in _o2_rows:
                 ovrs_holdings_krw = float(_row.get("ovrs_stck_evlu_amt1") or ovrs_holdings_krw)
@@ -3511,6 +3522,17 @@ def _get_overseas_positions() -> dict:
             })
             total_usd_value += val
             total_usd_pnl += pnl_usd
+
+        # KIS 공식 원화 평가(ovrs_stck_evlu_amt1)가 있으면 그 값을 신뢰한다.
+        # 개별 포지션×환율 합산은 KIS 평가환율과 미세하게 달라 카드가 앱과 어긋나므로,
+        # KIS 공식 KRW에서 환율을 역산해 환율·개별 포지션 원화를 일관되게 맞춘다.
+        if ovrs_holdings_krw > 1000 and total_usd_value > 0:
+            implied_rate = ovrs_holdings_krw / total_usd_value
+            if 1000 < implied_rate < 2500:
+                usd_rate = implied_rate
+                for _p in all_positions:
+                    _p["value_krw"] = round(_p["value_usd"] * usd_rate, 0)
+                    _p["pnl_krw"]   = round(_p["pnl_usd"] * usd_rate, 0)
 
         # 매수가능 USD (통합증거금 환산 포함)
         cash_usd = 0.0
