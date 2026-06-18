@@ -75,29 +75,67 @@ def _format(report: dict, comment: str | None, asset_label: str = "코인") -> s
     return "\n".join(lines)
 
 
+_LASTSENT = Path(_ROOT) / "outputs" / "AI_SUPERVISOR_LASTSENT.json"
+
+
+def _signature(report: dict, tune: dict | None) -> str:
+    """전송 중복판정용 내용 서명 — 시각(analyzed_at) 제외, 실질 지표·진단만.
+    데이터가 안 바뀌면 동일 서명 → 재전송 안 함(비장시간 스팸 방지)."""
+    m = report.get("metrics", {})
+    payload = {
+        "err": report.get("error"),
+        "n": m.get("n"), "win": m.get("win_rate"), "net": m.get("net_krw"),
+        "findings": sorted(report.get("findings") or []),
+        "tune": bool((tune or {}).get("applied")),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _load_lastsent() -> dict:
+    try:
+        return json.loads(_LASTSENT.read_text()) if _LASTSENT.is_file() else {}
+    except Exception:
+        return {}
+
+
 def _run_one(asset: str, label: str) -> tuple[dict, bool]:
-    """단일 자산 분석 → 리포트 저장 + (경고 시) 텔레그램. (report, sent) 반환."""
+    """단일 자산 분석 → 리포트 저장 + (경고 & 내용변경 시에만) 텔레그램."""
     report = analyze_asset_health(asset, lookback=60)
-    # 자동 튜닝은 코인 전용(CRYPTO_ACTIVE_THRESHOLDS.json) — 주식은 진단·보고만
-    tune = auto_tune(report) if asset == "crypto" else None
+    tune = auto_tune(report) if asset == "crypto" else None  # 자동튜닝은 코인 전용
     report["auto_tune"] = tune
     report["asset"] = asset
-    comment = llm_comment(report) if not report.get("error") else None
+
+    findings = report.get("findings") or []
+    has_warning = bool(report.get("error") and report.get("n") != 0) or \
+        bool((tune or {}).get("applied")) or \
+        any(f != "특이 이상 없음 — 정상 범위" and "표본" not in f for f in findings)
+    # de-dupe: 직전 전송과 내용 동일하면 재전송 안 함
+    sig = _signature(report, tune)
+    last = _load_lastsent()
+    changed = last.get(asset) != sig
+    will_send = has_warning and changed
+
+    # LLM 총평은 *전송할 때만* 생성(비용 절감 + 안 바뀐 데이터 재요청 방지)
+    comment = llm_comment(report) if (will_send and not report.get("error")) else None
     report["llm_comment"] = comment
-    # 코인은 하위호환 위해 기존 파일명도 유지 + 자산별 파일
+
     _REPORT.parent.mkdir(parents=True, exist_ok=True)
     (_REPORT.parent / f"AI_SUPERVISOR_REPORT_{asset}.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=1))
     if asset == "crypto":
         _REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=1))
-    findings = report.get("findings") or []
-    has_warning = bool(report.get("error") and report.get("n") != 0) or \
-        bool((tune or {}).get("applied")) or \
-        any(f != "특이 이상 없음 — 정상 범위" and "표본" not in f for f in findings)
+
     msg = _format(report, comment, label)
-    sent = _send_telegram(msg) if has_warning else False
-    print(f"[{datetime.now().strftime('%H:%M')}] {label} → AI_SUPERVISOR_REPORT_{asset}.json · "
-          f"텔레그램 {'전송' if sent else ('정상/표본부족 미전송' if not has_warning else '미전송')}")
+    sent = _send_telegram(msg) if will_send else False
+    if sent:
+        last[asset] = sig
+        try:
+            _LASTSENT.write_text(json.dumps(last, ensure_ascii=False, indent=1))
+        except Exception:
+            pass
+    reason = "전송" if sent else ("미전송(내용 동일·중복)" if (has_warning and not changed)
+                                  else "정상/표본부족 미전송")
+    print(f"[{datetime.now().strftime('%H:%M')}] {label} → AI_SUPERVISOR_REPORT_{asset}.json · 텔레그램 {reason}")
     print(msg + "\n" + "─" * 40)
     return report, sent
 
