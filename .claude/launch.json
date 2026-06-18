@@ -10,8 +10,8 @@
     {
       "name": "web-ui-preview",
       "runtimeExecutable": "/Volumes/JJU/#Project/Mac/Deepsignal/.venv/bin/python",
-      "runtimeArgs": ["main.py", "web-ui", "--port", "8771"],
-      "port": 8771,
+      "runtimeArgs": ["main.py", "web-ui", "--port", "8773"],
+      "port": 8773,
       "autoPort": false
     }
   ]

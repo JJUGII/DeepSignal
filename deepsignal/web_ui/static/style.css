@@ -1452,6 +1452,21 @@ tr:hover td { background: rgba(255,255,255,.06); color: var(--text-primary); }
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
+/* ── 손익 한눈에 테이블 ── */
+.pnl-table { margin-top: 10px; }
+.pnl-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-light);
+}
+.pnl-row-label { color: var(--text-secondary); font-size: 13px; }
+.pnl-row-val { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.pnl-row-sub { color: var(--text-muted); font-size: 11px; min-width: 34px; text-align: right; }
+.pnl-divider { height: 1px; background: var(--glass-border, var(--border)); margin: 4px 0; opacity: .6; }
+
 .summary-holding-split {
   display: grid;
   grid-template-columns: 1fr 1fr;

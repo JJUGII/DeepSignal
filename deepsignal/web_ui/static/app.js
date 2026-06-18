@@ -731,6 +731,8 @@ let dashAnalyzing = false;
 
 let _returnsPeriod = '1m';
 let _todayReturns = null;  // '오늘 거래' 카드 전용 1d 실현손익 (기간 선택과 무관)
+let _weekReturns = null;   // 손익 한눈에: 이번주(1w) 실현손익
+let _monthReturns = null;  // 손익 한눈에: 이번달(1m) 실현손익
 let _returnsCache  = {};
 // 현재 보유분 평가손익(미실현) — 기간 무관, status에서 세팅
 let _holdingPnl = { coin: {pct: null, count: 0}, stock: {pct: null, count: 0} };
@@ -1478,14 +1480,35 @@ function buildKpiStrip(d, holdings, stockHoldings, totalAsset, returnsData = nul
       <div class="summary-chart">${buildSparkline(totalHist, { width: 210, height: 34, color: 'var(--accent)' })}</div>
     </section>
 
+    ${(() => {
+      // ── 손익 한눈에: 실현(오늘/주/월) + 미실현(평가) ──
+      const wk = _weekReturns?.combined?.total_realized_krw;
+      const mo = _monthReturns?.combined?.total_realized_krw;
+      const wkN = _weekReturns?.combined?.trade_count;
+      const moN = _monthReturns?.combined?.trade_count;
+      const pnlRow = (label, val, extra) => `
+        <div class="pnl-row">
+          <span class="pnl-row-label">${label}</span>
+          <strong class="pnl-row-val ${val == null ? 'text-muted' : krwCls(val)}">${val == null ? '-' : signedKrw(val)}</strong>
+          ${extra ? `<span class="pnl-row-sub">${extra}</span>` : '<span class="pnl-row-sub"></span>'}
+        </div>`;
+      // 큰 숫자 = 이번달 누적 실현 (없으면 오늘)
+      const headline = (mo != null ? mo : realizedToday);
+      const headlineLabel = (mo != null ? '이번달 실현손익' : '오늘 실현손익');
+      return `
     <section class="summary-panel">
-      <div class="summary-panel-title">오늘 거래</div>
-      <div class="summary-big ${realizedToday != null ? krwCls(realizedToday) : ''}">${realizedToday != null ? signedKrw(realizedToday) : '-'}</div>
-      <div class="summary-muted">실현손익 ${_todayComb ? `· ${_todayComb.trade_count || 0}건 · 승률 ${(_todayComb.win_rate || 0).toFixed(1)}%` : ''}</div>
-      <div class="summary-metric-row"><span>매수</span><strong class="text-up">${fmt_krw(Math.round(todayBuy))}</strong></div>
-      <div class="summary-metric-row"><span>매도</span><strong class="text-down">${fmt_krw(Math.round(todaySell))}</strong></div>
-      <div class="summary-metric-row"><span>순현금</span><strong class="${todayNet > 0 ? 'text-up' : todayNet < 0 ? 'text-down' : ''}">${signedKrw(todayNet)}</strong></div>
-    </section>
+      <div class="summary-panel-title">💰 손익 한눈에</div>
+      <div class="summary-big ${headline != null ? krwCls(headline) : ''}">${headline != null ? signedKrw(headline) : '-'}</div>
+      <div class="summary-muted">${headlineLabel}</div>
+      <div class="pnl-table">
+        ${pnlRow('오늘', realizedToday, _todayComb ? `${_todayComb.trade_count||0}건` : '')}
+        ${pnlRow('이번주', wk, wkN != null ? `${wkN}건` : '')}
+        ${pnlRow('이번달', mo, moN != null ? `${moN}건` : '')}
+        <div class="pnl-divider"></div>
+        ${pnlRow('보유 평가손익(미실현)', unrealizedPnl, dl(unrealizedPnlPct))}
+      </div>
+    </section>`;
+    })()}
 
     <section class="summary-panel">
       <div class="summary-panel-title">보유 현황</div>
@@ -1668,7 +1691,7 @@ async function loadDashboard() {
   // 한글 코인명 로드 (최초 1회, 이후 캐시)
   loadCoinNames();
 
-  const [d, approval, kpos, kimchi, scoresRes, returnsData, openOrders, orderFailures, ospos, todayReturns] = await Promise.all([
+  const [d, approval, kpos, kimchi, scoresRes, returnsData, openOrders, orderFailures, ospos, todayReturns, weekReturns, monthReturns] = await Promise.all([
     GET('/api/status'),
     GET('/api/approval').catch(() => ({ crypto: {}, stock: {} })),
     GET('/api/kstock/positions').catch(() => ({ exists: false, positions: [] })),
@@ -1679,8 +1702,12 @@ async function loadDashboard() {
     GET('/api/orders/failures?limit=5').catch(() => ({ items: [] })),
     GET('/api/overseas/positions').catch(() => ({ exists: false, positions: [] })),
     GET('/api/stats/returns?period=1d').catch(() => null),  // '오늘 거래' 카드 전용(라벨=오늘)
+    GET('/api/stats/returns?period=1w').catch(() => null),   // 손익 한눈에: 주
+    GET('/api/stats/returns?period=1m').catch(() => null),   // 손익 한눈에: 월
   ]);
   _todayReturns = todayReturns;
+  _weekReturns = weekReturns;
+  _monthReturns = monthReturns;
   // 수익률 캐시 갱신
   if (returnsData) _returnsCache[_returnsPeriod] = { ts: Date.now(), data: returnsData };
   const openOrderSection = buildOpenOrders(openOrders);
