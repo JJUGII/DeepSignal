@@ -2463,12 +2463,15 @@ async function loadAutoImproveKillSwitch() {
         pendHtml = `
         <div style="margin-top:14px;padding:12px;border:1px solid var(--danger);border-radius:8px;background:rgba(220,50,50,0.06)">
           <div style="font-weight:600;color:var(--danger);font-size:13px">🔴 고위험 수정 — 승인 대기</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-            🎯 ${esc(d.brief?.weakness)}<br>
-            📝 변경: ${esc((d.files||[]).join(', '))} · 🧪 테스트 통과 · ⏱ ${fmt_time(d.created_at)}
+          <div style="font-size:12px;margin-top:6px;line-height:1.5">
+            🎯 <b>${esc(d.brief?.weakness) || '약점 개선'}</b><br>
+            <span style="color:var(--text-muted)">📁 ${(d.files||[]).length}개 파일 변경 · 🧪 테스트 통과 · ⏱ ${fmt_time(d.created_at)}</span>
           </div>
-          <pre style="margin:8px 0;max-height:240px;overflow:auto;font-size:10.5px;line-height:1.45;background:var(--bg);padding:8px;border-radius:6px;white-space:pre">${diffLines}</pre>
-          <div style="display:flex;gap:10px">
+          <details style="margin:8px 0">
+            <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);user-select:none">▸ 코드 변경 내용 보기 (개발자용)</summary>
+            <pre style="margin:8px 0 0;max-height:240px;overflow:auto;font-size:10.5px;line-height:1.45;background:var(--bg);padding:8px;border-radius:6px;white-space:pre">${diffLines}</pre>
+          </details>
+          <div style="display:flex;gap:10px;margin-top:6px">
             <button class="btn btn-primary" onclick="decideAutoImprove('approve')">✅ 승인하고 배포</button>
             <button class="btn btn-danger" onclick="decideAutoImprove('reject')">❌ 거부</button>
           </div>
@@ -5164,13 +5167,13 @@ async function renderTrades() {
         <td style="font-size:12px;text-align:right">${fmt_qty(t.quantity)}</td>
         <td style="font-size:12px;text-align:right">${fmt_price(t.unit_price, t.market)}</td>
         <td style="font-size:12px;text-align:right;font-weight:500">${amtDisplay}</td>
-        <td style="font-size:11px;text-align:right;color:var(--text-muted)">${feeDisplay}</td>
-        <td style="font-size:12px;text-align:right;font-weight:600">${setlDisplay}</td>
-        ${tab==='crypto' ? `<td style="text-align:center">${slipBar}</td>` : ''}
+        <td class="tcol-2nd" style="font-size:11px;text-align:right;color:var(--text-muted)">${feeDisplay}</td>
+        <td class="tcol-2nd" style="font-size:12px;text-align:right;font-weight:600">${setlDisplay}</td>
+        ${tab==='crypto' ? `<td class="tcol-2nd" style="text-align:center">${slipBar}</td>` : ''}
       </tr>`;
     }).join('');
 
-    const extraTh = tab === 'crypto' ? `<th style="padding:6px 8px;text-align:center">체결오차${helpBtn('slippage')}</th>` : '';
+    const extraTh = tab === 'crypto' ? `<th class="tcol-2nd" style="padding:6px 8px;text-align:center">체결오차${helpBtn('slippage')}</th>` : '';
     wrap.innerHTML = `<div class="table-wrap" style="overflow-x:auto">
       <table style="width:100%;font-size:12px;border-collapse:collapse">
         <thead><tr style="background:var(--bg-secondary);font-size:11px;color:var(--text-muted)">
@@ -5180,14 +5183,14 @@ async function renderTrades() {
           <th style="padding:6px 8px;text-align:right">거래수량</th>
           <th style="padding:6px 8px;text-align:right">거래단가</th>
           <th style="padding:6px 8px;text-align:right">거래금액</th>
-          <th style="padding:6px 8px;text-align:right">수수료${helpBtn('trade_fee')}</th>
-          <th style="padding:6px 8px;text-align:right">정산금액${helpBtn('trade_settlement')}</th>
+          <th class="tcol-2nd" style="padding:6px 8px;text-align:right">수수료${helpBtn('trade_fee')}</th>
+          <th class="tcol-2nd" style="padding:6px 8px;text-align:right">정산금액${helpBtn('trade_settlement')}</th>
           ${extraTh}
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="text-muted mt-8" style="font-size:11px;padding:0 4px">전체 ${total}건 중 ${items.length}건 표시</div>`;
+    <div class="text-muted mt-8" style="font-size:11px;padding:0 4px">전체 ${total}건 중 ${items.length}건 표시 · 보조 항목(수수료·정산)은 가로 스크롤/넓은 화면에서</div>`;
   }
 
   async function _tpLoad(tab) {
@@ -5254,14 +5257,47 @@ async function renderTrades() {
     if (_tpState[tab].data === null && !_tpState[tab].loading) _tpLoad(tab);
   };
 
+  // 표시된 체결을 종목별 FIFO 매칭해 실현손익 계산 (백엔드와 동일 로직).
+  function _realizedFromItems(items) {
+    const lots = {}; let total = 0, wins = 0, trades = 0;
+    const sorted = [...items].sort((a,b) => String(a.executed_at).localeCompare(String(b.executed_at)));
+    for (const f of sorted) {
+      const sym = f.symbol || f.market || '';
+      const qty = Number(f.quantity)||0, px = Number(f.unit_price)||0, fee = Number(f.fee_krw||f.fee)||0;
+      if (qty<=0 || px<=0) continue;
+      if (f.side === 'buy') {
+        (lots[sym] = lots[sym] || []).push([qty, px + (fee/qty)]);
+      } else if (f.side === 'sell') {
+        let rem = qty, mq = 0, mc = 0; const dq = lots[sym] || [];
+        while (rem > 1e-12 && dq.length) {
+          const lot = dq[0]; const take = Math.min(rem, lot[0]);
+          mc += take*lot[1]; mq += take; lot[0] -= take; rem -= take;
+          if (lot[0] <= 1e-12) dq.shift();
+        }
+        if (mq <= 0) continue;
+        const proceeds = mq*px - fee*(mq/qty);
+        const pnl = proceeds - mc;
+        total += pnl; trades++; if (pnl>0) wins++;
+      }
+    }
+    return { total: Math.round(total), trades, win_rate: trades ? Math.round(wins/trades*100) : 0 };
+  }
+
   function _buildTradeSummary(items) {
     if (!items || !items.length) return '';
     const buys  = items.filter(t => t.side === 'buy');
     const sells = items.filter(t => t.side === 'sell');
     const totalAmt = items.reduce((s, t) => s + (Number(t.trade_amount_krw || t.trade_amount) || 0), 0);
     const totalFee = items.reduce((s, t) => s + (Number(t.fee_krw || t.fee) || 0), 0);
+    const rz = _realizedFromItems(items);
+    const rzCls = rz.total > 0 ? 'text-up' : rz.total < 0 ? 'text-down' : '';
     return `
     <div class="trade-summary-strip">
+      <div class="trade-summary-card" style="grid-column:span 2;border:1px solid ${rz.total>0?'var(--up-dim)':rz.total<0?'var(--down-dim)':'var(--border)'}">
+        <div class="trade-summary-label">💰 실현손익 (이 목록)</div>
+        <div class="trade-summary-value ${rzCls}" style="font-size:18px">${rz.total>0?'+':''}${fmt_krw(rz.total)}</div>
+        <div class="trade-summary-sub">청산 ${rz.trades}건 · 승률 ${rz.win_rate}%</div>
+      </div>
       <div class="trade-summary-card">
         <div class="trade-summary-label">총 체결건</div>
         <div class="trade-summary-value">${items.length}건</div>
@@ -5612,7 +5648,7 @@ function renderReportsPage(reports) {
         ${listHtml}
       </div>
       <div class="reports-content" id="report-content">
-        <div class="text-muted report-placeholder">왼쪽에서 리포트를 선택하세요</div>
+        <div class="text-muted report-placeholder">위 목록에서 리포트를 선택하세요</div>
       </div>
     </div>
   `;
@@ -5629,6 +5665,10 @@ async function loadReport(name) {
   document.querySelectorAll('.report-item').forEach(el => {
     el.classList.toggle('active', el.dataset.name === name);
   });
+  // 모바일(단일 컬럼): 탭하면 내용 영역으로 스크롤 (위 목록 아래에 내용이 뜨므로)
+  if (window.matchMedia('(max-width: 760px)').matches) {
+    setTimeout(() => contentEl.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
+  }
 
   try {
     const data = await GET(`/api/reports/${encodeURIComponent(name)}`);
