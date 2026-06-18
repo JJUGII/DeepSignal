@@ -47,16 +47,27 @@ def _fmt_collected_at(report: dict) -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+_ASSET_EMOJI = {"코인": "🪙", "국내": "🇰🇷", "해외": "🇺🇸"}
+
+
+def _asset_banner(asset_label: str) -> str:
+    """리포트 최상단 자산 식별 배너 — 한눈에 코인/국내/해외 구분."""
+    em = _ASSET_EMOJI.get(asset_label, "📊")
+    return f"{em} ━━━ {asset_label} ━━━ {em}"
+
+
 def _format(report: dict, comment: str | None, asset_label: str = "코인") -> str:
     collected = _fmt_collected_at(report)
+    banner = _asset_banner(asset_label)
     if report.get("error"):
-        return f"📅 수집: {collected} (KST)\n🤖 [AI 감독관·{asset_label}] {report['error']}"
+        return f"{banner}\n📅 수집: {collected} (KST)\n🤖 [AI 감독관] {report['error']}"
     m = report["metrics"]
     hold = m.get("median_hold_min")
     hold_s = f"{hold}분" if hold is not None else "—"
     lines = [
+        banner,
         f"📅 데이터 수집: {collected} (KST)",
-        f"🤖 [AI 매매 감독관] {asset_label}",
+        "🤖 AI 매매 감독관",
         f"최근 {m['n']}건 · 승률 {m['win_rate']}% · 순손익 {m['net_krw']:+,}원 "
         f"(거래대금 {m['volume_krw']:,}원·수수료 {m['fee_krw']:,}원, 종목당 평균 {m['avg_trade_pct']}%)",
         f"평균 익절 +{m['avg_win']}% / 손절 {m['avg_loss']}% · 중앙보유 {hold_s} · churn {m['churn_rate']}%",
